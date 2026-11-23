@@ -1,0 +1,4 @@
+packages:
+  - 'packages/*'
+  # Enabled in Phase 2:
+  # - 'hosts/office-js'

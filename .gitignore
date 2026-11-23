@@ -1,0 +1,54 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+build/
+out/
+*.tsbuildinfo
+
+# Test & coverage
+coverage/
+
+# Vite & local dev
+.vite/
+*.local
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Visual Studio / VSTO (.NET Framework 4.8)
+.vs/
+[Bb]in/
+[Oo]bj/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.cache
+TestResults/
+*.nupkg
+*.snupkg
+packages_nuget/
+
+# WebView2 runtime cache
+*.WebView2/
+
+# macOS Xcode / DMG build outputs
+hosts/mac-dmg/build/
+hosts/mac-dmg/DerivedData/
+*.dmg
+*.pkg
