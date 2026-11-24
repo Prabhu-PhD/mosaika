@@ -13,6 +13,7 @@
     "test:core": "pnpm --filter @bento/core test",
     "typecheck": "pnpm -r --if-present typecheck",
     "dev:harness": "pnpm --filter @bento/browser-harness dev",
+    "dev:officejs": "pnpm --filter @bento/office-js dev",
     "build:vsto": "powershell -ExecutionPolicy Bypass -File hosts/windows-vsto/scripts/build-vsto.ps1 -Configuration Release",
     "package:vsto": "powershell -ExecutionPolicy Bypass -File hosts/windows-vsto/scripts/package-installer.ps1",
     "clean": "pnpm -r --if-present clean"

@@ -1,5 +1,4 @@
 packages:
   - 'packages/*'
   - 'hosts/windows-vsto/web'
-  # Enabled in Phase 2:
-  # - 'hosts/office-js'
+  - 'hosts/office-js'
