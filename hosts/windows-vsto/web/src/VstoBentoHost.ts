@@ -3,9 +3,11 @@ import type {
   BentoRpcMethod,
   BentoRpcRequest,
   BentoRpcResponse,
+  EntranceAnimationSpec,
   HostCapabilities,
   IBentoHost,
   LayoutDiffPayload,
+  MosaikafyPayload,
   MultiSlideItem,
   SelectionContext,
   StyleApplyPayload,
@@ -180,6 +182,17 @@ export class VstoBentoHost implements IBentoHost {
 
   public detachBento(bentoId: string): Promise<void> {
     return this.call<{ bentoId: string }, void>('detachBento', { bentoId });
+  }
+
+  public mosaikafySelection(payload: MosaikafyPayload): Promise<{ convertedCount: number }> {
+    return this.call<MosaikafyPayload, { convertedCount: number }>('mosaikafySelection', payload);
+  }
+
+  public applyEntranceAnimations(bentoId: string, spec: EntranceAnimationSpec): Promise<void> {
+    return this.call<{ bentoId: string; spec: EntranceAnimationSpec }, void>(
+      'applyEntranceAnimations',
+      { bentoId, spec }
+    );
   }
 
   public onSelectionChanged(handler: () => void): () => void {

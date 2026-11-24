@@ -7,3 +7,4 @@ export * from './diff.js';
 export * from './styles.js';
 export * from './shapes.js';
 export * from './templates.js';
+export * from './powerFeatures.js';

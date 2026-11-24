@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { BENTO_OFFSLIDE_OFFSET_PT, BENTO_TAGS } from '@bento/contract';
 import {
   buildCellRenderSpecs,
+  buildMosaikafyPayload,
   computeLayoutDiff,
   computeStylePayload,
   createIntentBentoDocument,
@@ -456,5 +457,55 @@ describe('@bento/office-js OfficeJsBentoHost', () => {
     for (const sh of env.firstSlide.shapeList) {
       expect(sh.tagStore.size).toBe(0);
     }
+  });
+
+  it('Mosaika-fies 3 selected existing shapes in-place while preserving text content', async () => {
+    const env = createMockOfficeEnvironment({ has110: true });
+    const host = new OfficeJsBentoHost(env.runtime);
+
+    const s1 = env.firstSlide.shapes.addGeometricShape('Rectangle', {
+      left: 50,
+      top: 80,
+      width: 340,
+      height: 220,
+    }) as MockOfficeShape;
+    s1.textFrame!.textRange.text = 'Primary Strategy Thesis';
+
+    const s2 = env.firstSlide.shapes.addGeometricShape('Rectangle', {
+      left: 440,
+      top: 80,
+      width: 200,
+      height: 110,
+    }) as MockOfficeShape;
+    s2.textFrame!.textRange.text = 'Proof Point A';
+
+    const s3 = env.firstSlide.shapes.addGeometricShape('Rectangle', {
+      left: 440,
+      top: 220,
+      width: 200,
+      height: 110,
+    }) as MockOfficeShape;
+    s3.textFrame!.textRange.text = 'Proof Point B';
+
+    env.setSelectedShapeIds([s1.id, s2.id, s3.id]);
+
+    const ctx = await host.getSelectionContext();
+    expect(ctx.selectedShapeCount).toBe(3);
+    expect(ctx.selectedShapes).toHaveLength(3);
+
+    const built = buildMosaikafyPayload(ctx.selectedShapes!, ctx.slideBounds, 'executive-brief', {
+      supportsShadows: false,
+      supportsCustomGeometry: false,
+      isDarkTheme: false,
+    });
+    expect(built.ok).toBe(true);
+    if (!built.ok) return;
+
+    const res = await host.mosaikafySelection(built.value.payload);
+    expect(res.convertedCount).toBe(3);
+    expect(s1.textFrame!.textRange.text).toBe('Primary Strategy Thesis');
+    expect(s2.textFrame!.textRange.text).toBe('Proof Point A');
+    expect(s3.textFrame!.textRange.text).toBe('Proof Point B');
+    expect(s1.tagStore.get(BENTO_TAGS.ID)).toBe(built.value.state.bentoId);
   });
 });

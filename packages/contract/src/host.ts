@@ -1,4 +1,13 @@
-import type { CellRole, CellShapeKind, HierarchyMode, RectPt, StylePresetId } from './types.js';
+import type {
+  CellRole,
+  CellShapeKind,
+  EntranceAnimationSpec,
+  ExistingShapeSummary,
+  HierarchyMode,
+  MosaikafySlotAssignment,
+  RectPt,
+  StylePresetId,
+} from './types.js';
 
 export interface HostCapabilities {
   platform: 'browser-harness' | 'vsto' | 'officejs' | 'mac-dmg';
@@ -11,6 +20,8 @@ export interface HostCapabilities {
   supportsImageCropScrim: boolean;
   supportsSlideDuplication: boolean;
   supportsCustomGeometry: boolean; // True when host can emit circles, pills, L-shapes & concave cutouts
+  supportsMosaikafy?: boolean; // True when host can convert 2+ selected slide shapes into a live Bento grid
+  supportsEntranceAnimations?: boolean; // True when host can apply/preview staggered entrance animations
 }
 
 export interface SelectionContext {
@@ -18,6 +29,8 @@ export interface SelectionContext {
   slideBounds: RectPt; // e.g. 960 x 540 pt for 16:9 widescreen
   selectedShapeCount: number;
   selectedShapeBounds?: RectPt; // Populated if 1 non-bento shape selected
+  /** Populated when 2+ non-bento shapes are selected for non-destructive Mosaika-fy conversion */
+  selectedShapes?: ExistingShapeSummary[];
   activeBentoId?: string;
   hydratedStateJson?: string; // Highest BENTO_REV state on slide
   survivingSlotIds: string[]; // All live slotIds for activeBentoId
@@ -84,6 +97,14 @@ export interface MultiSlideItem {
   applyMorphTransition: boolean;
 }
 
+export interface MosaikafyPayload {
+  bentoId: string;
+  assignments: MosaikafySlotAssignment[];
+  cells: CellRenderSpec[];
+  stylePayload: StyleApplyPayload;
+  commitUndoEntry: boolean;
+}
+
 export interface IBentoHost {
   getCapabilities(): Promise<HostCapabilities>;
   getSelectionContext(): Promise<SelectionContext>;
@@ -99,5 +120,7 @@ export interface IBentoHost {
   generateMultiSlides(items: MultiSlideItem[]): Promise<{ createdSlideCount: number }>;
   reorderReadingOrder(bentoId: string, orderedSlotIds: string[]): Promise<void>;
   detachBento(bentoId: string): Promise<void>;
+  mosaikafySelection?(payload: MosaikafyPayload): Promise<{ convertedCount: number }>;
+  applyEntranceAnimations?(bentoId: string, spec: EntranceAnimationSpec): Promise<void>;
   onSelectionChanged?(handler: () => void): () => void;
 }

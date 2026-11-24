@@ -40,6 +40,13 @@ namespace Mosaika.PowerPointAddIn.Tests
             }
             public void ReorderReadingOrder(string bentoId, List<string> orderedSlotIds) => LastMethod = $"reorder:{orderedSlotIds.Count}";
             public void DetachBento(string bentoId) => LastMethod = $"detach:{bentoId}";
+            public int MosaikafySelection(MosaikafyPayloadDto payload)
+            {
+                LastMethod = $"mosaikafy:{payload.BentoId}";
+                return payload.Assignments.Count;
+            }
+            public void ApplyEntranceAnimations(string bentoId, EntranceAnimationSpecDto spec) =>
+                LastMethod = $"animate:{bentoId}:{spec.Preset}:{spec.OrderedSlotIds.Count}";
         }
 
         [Fact]
@@ -55,6 +62,8 @@ namespace Mosaika.PowerPointAddIn.Tests
             Assert.Equal("vsto", (string)obj["result"]?["platform"]);
             Assert.True((bool)obj["result"]?["supportsCustomGeometry"]);
             Assert.True((bool)obj["result"]?["supportsNativeUndoGrouping"]);
+            Assert.True((bool)obj["result"]?["supportsMosaikafy"]);
+            Assert.True((bool)obj["result"]?["supportsEntranceAnimations"]);
         }
 
         [Fact]
@@ -81,6 +90,27 @@ namespace Mosaika.PowerPointAddIn.Tests
 
             Assert.Equal("req_99", (string)obj["id"]);
             Assert.Equal("INVALID_PARAMS", (string)obj["error"]?["code"]);
+        }
+
+        [Fact]
+        public void Dispatch_RoutesMosaikafyAndEntranceAnimations()
+        {
+            var fake = new FakeAdapter();
+            var dispatcher = new RpcDispatcher(fake);
+
+            string mRaw = dispatcher.Dispatch(
+                "{\"id\":\"req_20\",\"method\":\"mosaikafySelection\",\"params\":{\"bentoId\":\"bnt_m1\",\"assignments\":[{\"sourceShapeId\":\"1\",\"targetSlotId\":\"slot_01\"},{\"sourceShapeId\":\"2\",\"targetSlotId\":\"slot_02\"}],\"cells\":[],\"stylePayload\":{\"cells\":[]},\"commitUndoEntry\":true}}");
+            var mObj = JObject.Parse(mRaw);
+            Assert.Equal("req_20", (string)mObj["id"]);
+            Assert.Equal(2, (int)mObj["result"]?["convertedCount"]);
+            Assert.Equal("mosaikafy:bnt_m1", fake.LastMethod);
+
+            string aRaw = dispatcher.Dispatch(
+                "{\"id\":\"req_21\",\"method\":\"applyEntranceAnimations\",\"params\":{\"bentoId\":\"bnt_m1\",\"spec\":{\"preset\":\"rise-stagger\",\"durationSec\":0.5,\"staggerSec\":0.1,\"orderedSlotIds\":[\"slot_01\",\"slot_02\"]}}}");
+            var aObj = JObject.Parse(aRaw);
+            Assert.Equal("req_21", (string)aObj["id"]);
+            Assert.True((bool)aObj["result"]?["ok"]);
+            Assert.Equal("animate:bnt_m1:rise-stagger:2", fake.LastMethod);
         }
     }
 }

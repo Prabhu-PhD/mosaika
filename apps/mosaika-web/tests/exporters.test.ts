@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { createIntentBentoDocument, buildCellRenderSpecs } from '@bento/core';
+import {
+  buildCellRenderSpecs,
+  buildEntranceAnimationSpec,
+  createIntentBentoDocument,
+} from '@bento/core';
 import {
   decodeSharePayload,
   encodeSharePayload,
@@ -140,5 +144,21 @@ describe('Mosaika Web Studio — exporters & live reflow', () => {
       expect(c.rect.left + c.rect.width).toBeLessThanOrEqual(794 - 43.9);
       expect(c.rect.top + c.rect.height).toBeLessThanOrEqual(1123 - 43.9);
     }
+  });
+
+  it('applies staggered entrance animations and emits CSS @keyframes in HTML+Tailwind export', async () => {
+    const host = new WebStudioHost({ skipDefaultSeed: false });
+    const doc = host.getSnapshot().activeDoc!;
+    const spec = buildEntranceAnimationSpec(doc, 'rise-stagger');
+
+    await host.applyEntranceAnimations(doc.bentoId, spec);
+    const snap = host.getSnapshot();
+    expect(snap.activeAnimation?.preset).toBe('rise-stagger');
+    expect(snap.animationRunId).toBe(1);
+
+    const html = exportToHtmlTailwind(snap);
+    expect(html).toContain('@keyframes mosaika-enter');
+    expect(html).toContain('translateY(24px)');
+    expect(html).toContain('animation: mosaika-enter 0.5s');
   });
 });

@@ -414,6 +414,17 @@ export function StudioCanvas({
                 ? hexToRgba(card.style.borderColorHex, card.style.borderTransparency)
                 : 'none';
 
+            const anim = snapshot.activeAnimation;
+            const animIndex = anim ? anim.orderedSlotIds.indexOf(card.slotId) : -1;
+            const animStyle: React.CSSProperties | undefined =
+              anim && anim.preset !== 'none' && animIndex >= 0
+                ? {
+                    transformBox: 'fill-box',
+                    transformOrigin: 'center',
+                    animation: `mosaika-${anim.preset} ${anim.durationSec}s cubic-bezier(0.22, 1, 0.36, 1) ${(animIndex * anim.staggerSec).toFixed(2)}s both`,
+                  }
+                : undefined;
+
             const headlineSize =
               card.role === 'hero'
                 ? Math.max(18, Math.min(34, Math.round(card.rect.width * 0.048)))
@@ -428,9 +439,10 @@ export function StudioCanvas({
 
             return (
               <g
-                key={card.id}
+                key={`${card.id}-${snapshot.animationRunId}`}
                 data-testid={`studio-card-${card.slotId}`}
                 className="cursor-pointer"
+                style={animStyle}
                 onClick={(e) => handleCardClick(e, card)}
                 onDoubleClick={(e) => {
                   e.stopPropagation();

@@ -35,6 +35,16 @@ namespace Mosaika.PowerPointAddIn.Rpc
         [JsonProperty("supportsImageCropScrim")] public bool SupportsImageCropScrim { get; set; } = true;
         [JsonProperty("supportsSlideDuplication")] public bool SupportsSlideDuplication { get; set; } = true;
         [JsonProperty("supportsCustomGeometry")] public bool SupportsCustomGeometry { get; set; } = true;
+        [JsonProperty("supportsMosaikafy")] public bool SupportsMosaikafy { get; set; } = true;
+        [JsonProperty("supportsEntranceAnimations")] public bool SupportsEntranceAnimations { get; set; } = true;
+    }
+
+    public sealed class ExistingShapeSummaryDto
+    {
+        [JsonProperty("shapeId")] public string ShapeId { get; set; } = string.Empty;
+        [JsonProperty("rect")] public RectPtDto Rect { get; set; } = new RectPtDto();
+        [JsonProperty("textLength")] public int TextLength { get; set; }
+        [JsonProperty("hasImage")] public bool HasImage { get; set; }
     }
 
     public sealed class SelectionContextDto
@@ -43,6 +53,7 @@ namespace Mosaika.PowerPointAddIn.Rpc
         [JsonProperty("slideBounds")] public RectPtDto SlideBounds { get; set; } = new RectPtDto { Width = 960f, Height = 540f };
         [JsonProperty("selectedShapeCount")] public int SelectedShapeCount { get; set; }
         [JsonProperty("selectedShapeBounds", NullValueHandling = NullValueHandling.Ignore)] public RectPtDto SelectedShapeBounds { get; set; }
+        [JsonProperty("selectedShapes", NullValueHandling = NullValueHandling.Ignore)] public List<ExistingShapeSummaryDto> SelectedShapes { get; set; }
         [JsonProperty("activeBentoId", NullValueHandling = NullValueHandling.Ignore)] public string ActiveBentoId { get; set; }
         [JsonProperty("hydratedStateJson", NullValueHandling = NullValueHandling.Ignore)] public string HydratedStateJson { get; set; }
         [JsonProperty("survivingSlotIds")] public List<string> SurvivingSlotIds { get; set; } = new List<string>();
@@ -144,6 +155,35 @@ namespace Mosaika.PowerPointAddIn.Rpc
         [JsonProperty("orderedSlotIds")] public List<string> OrderedSlotIds { get; set; } = new List<string>();
     }
 
+    public sealed class MosaikafySlotAssignmentDto
+    {
+        [JsonProperty("sourceShapeId")] public string SourceShapeId { get; set; } = string.Empty;
+        [JsonProperty("targetSlotId")] public string TargetSlotId { get; set; } = string.Empty;
+    }
+
+    public sealed class MosaikafyPayloadDto
+    {
+        [JsonProperty("bentoId")] public string BentoId { get; set; } = string.Empty;
+        [JsonProperty("assignments")] public List<MosaikafySlotAssignmentDto> Assignments { get; set; } = new List<MosaikafySlotAssignmentDto>();
+        [JsonProperty("cells")] public List<CellRenderSpecDto> Cells { get; set; } = new List<CellRenderSpecDto>();
+        [JsonProperty("stylePayload")] public StyleApplyPayloadDto StylePayload { get; set; } = new StyleApplyPayloadDto();
+        [JsonProperty("commitUndoEntry")] public bool CommitUndoEntry { get; set; } = true;
+    }
+
+    public sealed class EntranceAnimationSpecDto
+    {
+        [JsonProperty("preset")] public string Preset { get; set; } = "none";
+        [JsonProperty("durationSec")] public float DurationSec { get; set; } = 0.45f;
+        [JsonProperty("staggerSec")] public float StaggerSec { get; set; } = 0.08f;
+        [JsonProperty("orderedSlotIds")] public List<string> OrderedSlotIds { get; set; } = new List<string>();
+    }
+
+    public sealed class ApplyEntranceAnimationsParamsDto
+    {
+        [JsonProperty("bentoId")] public string BentoId { get; set; } = string.Empty;
+        [JsonProperty("spec")] public EntranceAnimationSpecDto Spec { get; set; } = new EntranceAnimationSpecDto();
+    }
+
     public sealed class BentoRpcRequestDto
     {
         [JsonProperty("id")] public string Id { get; set; } = string.Empty;
@@ -168,5 +208,7 @@ namespace Mosaika.PowerPointAddIn.Rpc
         int GenerateMultiSlides(List<MultiSlideItemDto> items);
         void ReorderReadingOrder(string bentoId, List<string> orderedSlotIds);
         void DetachBento(string bentoId);
+        int MosaikafySelection(MosaikafyPayloadDto payload);
+        void ApplyEntranceAnimations(string bentoId, EntranceAnimationSpecDto spec);
     }
 }

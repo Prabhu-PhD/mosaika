@@ -1,21 +1,25 @@
 import { useState } from 'react';
 import type {
   BentoDocumentState,
+  EntranceAnimationPreset,
   HierarchyMode,
   HostCapabilities,
   MultiSlideMode,
   StylePresetId,
 } from '@bento/contract';
-import { STYLE_PRESETS } from '@bento/core';
-import { ArrowUpDown, Pipette, Unlink } from 'lucide-react';
+import { ENTRANCE_ANIMATION_PRESETS, STYLE_PRESETS } from '@bento/core';
+import { ArrowUpDown, Bookmark, Pipette, Play, RotateCcw, Unlink } from 'lucide-react';
 
 export interface DrawersProps {
   state: BentoDocumentState;
   capabilities: HostCapabilities;
   hasSingleSelectedCard: boolean;
+  activeMotionPreset: EntranceAnimationPreset;
   onSelectPreset: (presetId: StylePresetId) => void;
   onSelectHierarchy: (mode: HierarchyMode) => void;
   onSyncStyleFromSelected: () => void;
+  onApplyEntranceAnimation: (preset: EntranceAnimationPreset) => void;
+  onSaveToLibrary: () => void;
   onGenerateMultiSlides: (
     mode: MultiSlideMode,
     slideCount: number,
@@ -25,7 +29,7 @@ export interface DrawersProps {
   onDetachBento: () => void;
 }
 
-type DrawerKey = 'styles' | 'multislide' | 'cleanup';
+type DrawerKey = 'styles' | 'motion' | 'multislide' | 'cleanup';
 
 const HIERARCHY_OPTIONS: ReadonlyArray<{ id: HierarchyMode; label: string }> = [
   { id: 'uniform', label: 'Uniform' },
@@ -37,9 +41,12 @@ export function Drawers({
   state,
   capabilities,
   hasSingleSelectedCard,
+  activeMotionPreset,
   onSelectPreset,
   onSelectHierarchy,
   onSyncStyleFromSelected,
+  onApplyEntranceAnimation,
+  onSaveToLibrary,
   onGenerateMultiSlides,
   onReorderReadingOrder,
   onDetachBento,
@@ -56,8 +63,13 @@ export function Drawers({
     STYLE_PRESETS.find((p) => p.id === state.params.stylePreset)?.label ?? 'Soft Modern';
   const activeHierarchyLabel =
     HIERARCHY_OPTIONS.find((h) => h.id === state.params.hierarchyMode)?.label ?? 'Hero Accent';
+  const activeMotionLabel =
+    activeMotionPreset === 'none'
+      ? 'None'
+      : (ENTRANCE_ANIMATION_PRESETS.find((p) => p.id === activeMotionPreset)?.label ?? 'Fade Cascade');
 
   const stylesOpen = openRow === 'styles';
+  const motionOpen = openRow === 'motion';
   const multiOpen = openRow === 'multislide';
   const cleanupOpen = openRow === 'cleanup';
 
@@ -194,7 +206,84 @@ export function Drawers({
         )}
       </section>
 
-      {/* Row 2: Multi-Slide Generator */}
+      {/* Row 2: Staggered Entrance Motion (strictly capability-gated per Rule 3) */}
+      {capabilities.supportsEntranceAnimations && (
+        <section aria-label="Staggered Entrance Motion">
+          <button
+            type="button"
+            onClick={() => toggle('motion')}
+            data-testid="drawer-toggle-motion"
+            aria-expanded={motionOpen}
+            className="flex h-[36px] w-full items-center justify-between px-3 text-left transition-colors hover:bg-[var(--bento-well)]"
+          >
+            <span className="shrink-0 text-[10.5px] font-semibold uppercase tracking-[0.05em] text-[var(--bento-fg-muted)]">
+              Motion
+            </span>
+            <span className="ml-3 flex min-w-0 items-center gap-1.5 text-[11.5px] text-[var(--bento-fg-muted)]">
+              <span className="truncate">{activeMotionLabel}</span>
+              <span aria-hidden="true" className="shrink-0 text-[12px]">
+                {motionOpen ? '▴' : '›'}
+              </span>
+            </span>
+          </button>
+
+          {motionOpen && (
+            <div className="space-y-2 border-t border-[var(--bento-border)] px-3 py-2.5">
+              <div className="grid grid-cols-2 gap-1.5" role="radiogroup" aria-label="Entrance animations">
+                {ENTRANCE_ANIMATION_PRESETS.map((preset) => {
+                  const active = activeMotionPreset === preset.id;
+                  return (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      role="radio"
+                      aria-checked={active}
+                      data-testid={`motion-${preset.id}`}
+                      onClick={() => onApplyEntranceAnimation(preset.id)}
+                      className={`flex flex-col gap-0.5 rounded-[2px] border px-2 py-1.5 text-left transition-colors ${
+                        active
+                          ? 'border-[var(--bento-fg)] bg-[var(--bento-well)] shadow-[inset_0_0_0_1px_var(--bento-fg)]'
+                          : 'border-[var(--bento-border)] bg-[var(--bento-bg)] hover:border-[var(--bento-border-strong)]'
+                      }`}
+                    >
+                      <span className="text-[11px] font-semibold text-[var(--bento-fg)]">
+                        {preset.label}
+                      </span>
+                      <span className="font-mono text-[9.5px] text-[var(--bento-fg-muted)]">
+                        {preset.durationSec}s · +{Math.round(preset.staggerSec * 1000)}ms
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="grid grid-cols-2 gap-1.5">
+                <button
+                  type="button"
+                  disabled={activeMotionPreset === 'none'}
+                  onClick={() => onApplyEntranceAnimation(activeMotionPreset)}
+                  data-testid="btn-motion-replay"
+                  className="flex h-[28px] items-center justify-center gap-1 rounded-[2px] border border-[var(--bento-border-strong)] bg-[var(--bento-bg)] text-[11px] font-medium text-[var(--bento-fg)] hover:bg-[var(--bento-well)] disabled:opacity-40"
+                >
+                  <Play className="h-3 w-3" />
+                  <span>Replay</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onApplyEntranceAnimation('none')}
+                  data-testid="btn-motion-clear"
+                  className="flex h-[28px] items-center justify-center gap-1 rounded-[2px] border border-[var(--bento-border-strong)] bg-[var(--bento-bg)] text-[11px] font-medium text-[var(--bento-fg)] hover:bg-[var(--bento-well)]"
+                >
+                  <RotateCcw className="h-3 w-3" />
+                  <span>Clear</span>
+                </button>
+              </div>
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* Row 3: Multi-Slide Generator */}
       <section aria-label="Multi-Slide Generator">
         <button
           type="button"
@@ -348,6 +437,16 @@ export function Drawers({
 
         {cleanupOpen && (
           <div className="space-y-1.5 border-t border-[var(--bento-border)] px-3 py-2.5">
+            <button
+              type="button"
+              onClick={onSaveToLibrary}
+              data-testid="btn-save-layout-cleanup"
+              className="flex h-[30px] w-full items-center justify-center gap-1.5 rounded-[2px] border border-[var(--bento-border-strong)] bg-[var(--bento-bg)] px-2 text-[11.5px] font-medium text-[var(--bento-fg)] hover:bg-[var(--bento-well)]"
+            >
+              <Bookmark className="h-3 w-3 text-[var(--bento-fg-muted)]" />
+              <span>Save Layout to My Library</span>
+            </button>
+
             <button
               type="button"
               onClick={onReorderReadingOrder}

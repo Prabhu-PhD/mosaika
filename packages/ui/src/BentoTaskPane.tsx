@@ -4,12 +4,14 @@ import {
   type BentoDocumentState,
   type BentoTemplate,
   type CellShapeKind,
+  type EntranceAnimationPreset,
   type GridSystemId,
   type HierarchyMode,
   type HostCapabilities,
   type IBentoHost,
   type LayoutIntent,
   type MultiSlideMode,
+  type SavedBentoBlueprint,
   type SelectionContext,
   type SplitAxis,
   type StylePresetId,
@@ -17,6 +19,8 @@ import {
 import {
   applyTemplateToDocument,
   buildCellRenderSpecs,
+  buildEntranceAnimationSpec,
+  buildMosaikafyPayload,
   collectLeaves,
   computeAutoFitRect,
   computeLayoutDiff,
@@ -29,6 +33,7 @@ import {
   getIntentDefinition,
   getPresetDefaultRadius,
   hydrateStateFromJson,
+  instantiateSavedBlueprint,
   mergeLeaves,
   mirrorBentoLayout,
   type MirrorDirection,
@@ -63,6 +68,11 @@ import {
   type SeedHistory,
   type UndoHistory,
 } from './history.js';
+import {
+  deleteBlueprintFromLibrary,
+  loadSavedBlueprints,
+  saveBlueprintToLibrary,
+} from './personalLibrary.js';
 import { SingleFlightQueue } from './queue.js';
 
 export interface BentoTaskPaneProps {
@@ -85,6 +95,8 @@ const DEFAULT_CAPABILITIES: HostCapabilities = {
   supportsImageCropScrim: true,
   supportsSlideDuplication: true,
   supportsCustomGeometry: true,
+  supportsMosaikafy: true,
+  supportsEntranceAnimations: true,
 };
 
 const OFFICE_DEBOUNCE_MS = 150;
@@ -106,6 +118,10 @@ export function BentoTaskPane({
   const [notice, setNotice] = useState<ToastNotice | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [isLibraryBrowserOpen, setIsLibraryBrowserOpen] = useState(false);
+  const [activeMotionPreset, setActiveMotionPreset] = useState<EntranceAnimationPreset>('none');
+  const [savedBlueprints, setSavedBlueprints] = useState<SavedBentoBlueprint[]>(() =>
+    loadSavedBlueprints()
+  );
 
   const queueRef = useRef<SingleFlightQueue>(new SingleFlightQueue());
   const toastSeqRef = useRef(1);
@@ -317,6 +333,137 @@ export function BentoTaskPane({
         applyStyle: true,
       })
     );
+  };
+
+  // Phase 3: Non-destructive Mosaika-fy of 2+ selected slide shapes
+  const handleMosaikafySelected = () => {
+    if (
+      !capabilities.supportsMosaikafy ||
+      !host.mosaikafySelection ||
+      !selection?.selectedShapes ||
+      selection.selectedShapes.length < 2
+    ) {
+      return;
+    }
+
+    const built = buildMosaikafyPayload(
+      selection.selectedShapes,
+      selection.slideBounds,
+      selectedEntryIntent,
+      {
+        supportsShadows: capabilities.supportsShadows,
+        supportsCustomGeometry: capabilities.supportsCustomGeometry,
+        isDarkTheme: theme === 'dark',
+      }
+    );
+    if (!built.ok) {
+      showNotice('error', built.message);
+      return;
+    }
+
+    const { state: nextState, payload } = built.value;
+    const nextSlots = payload.cells.map((c) => c.slotId);
+    setDocState(nextState);
+    setUndoHistory(createEmptyUndoHistory());
+    setSeedHistory(createSeedHistory(nextState.params.seed));
+    setSurvivingSlots(nextSlots);
+    survivingSlotsRef.current = nextSlots;
+    setSelectedSlots([]);
+
+    void queueRef.current.enqueue(async () => {
+      const res = await host.mosaikafySelection!(payload);
+      showNotice(
+        'success',
+        `Mosaika-fied ${res.convertedCount} existing shapes without losing content.`
+      );
+      await syncFromHost();
+    });
+  };
+
+  // Phase 3: Personal Saved Library — Save, Insert, Swap, Delete
+  const handleSaveCurrentLayout = (customName?: string) => {
+    const current = docStateRef.current;
+    if (!current) return;
+    const intentDef = getIntentDefinition(current.params.intent);
+    const defaultName = `${intentDef.label} ${current.params.count}`;
+    const { blueprint, nextList } = saveBlueprintToLibrary(
+      savedBlueprints,
+      customName?.trim() || defaultName,
+      current
+    );
+    setSavedBlueprints(nextList);
+    showNotice('success', `Saved "${blueprint.name}" to My Library.`);
+  };
+
+  const handleDeleteSavedBlueprint = (id: string) => {
+    setSavedBlueprints((prev) => deleteBlueprintFromLibrary(prev, id));
+    showNotice('info', 'Removed layout from My Library.');
+  };
+
+  const handleInsertSavedBlueprint = (blueprint: SavedBentoBlueprint) => {
+    const hasSingleShape =
+      selection !== null &&
+      selection.selectedShapeCount === 1 &&
+      selection.selectedShapeBounds !== undefined;
+
+    const slideBounds = selection?.slideBounds ?? { left: 0, top: 0, width: 960, height: 540 };
+    const targetRect = hasSingleShape
+      ? selection.selectedShapeBounds!
+      : computeAutoFitRect(slideBounds);
+
+    const nextState = instantiateSavedBlueprint(blueprint, targetRect, null);
+    setDocState(nextState);
+    setUndoHistory(createEmptyUndoHistory());
+    setSeedHistory(createSeedHistory(nextState.params.seed));
+    setSelectedSlots([]);
+    survivingSlotsRef.current = [];
+
+    void queueRef.current.enqueue(() =>
+      commitStateToHost(null, nextState, {
+        deletePlaceholderSelection: hasSingleShape,
+        commitUndoEntry: true,
+        applyStyle: true,
+      })
+    );
+  };
+
+  const handleApplySavedBlueprint = (blueprint: SavedBentoBlueprint) => {
+    const current = docStateRef.current;
+    if (!current) return;
+    const nextState = instantiateSavedBlueprint(blueprint, current.anchorRect, current);
+    setDocState(nextState);
+    setSeedHistory((s) => pushSeed(s, nextState.params.seed));
+    setSelectedSlots([]);
+    setIsLibraryBrowserOpen(false);
+    void queueRef.current.enqueue(() =>
+      commitStateToHost(current, nextState, {
+        commitUndoEntry: true,
+        applyStyle: true,
+        pushHistory: true,
+      })
+    );
+    showNotice('success', `Applied "${blueprint.name}".`);
+  };
+
+  // Phase 3: Staggered Entrance Animations
+  const handleApplyEntranceAnimation = (preset: EntranceAnimationPreset) => {
+    const current = docStateRef.current;
+    if (!current || !capabilities.supportsEntranceAnimations || !host.applyEntranceAnimations) {
+      return;
+    }
+    setActiveMotionPreset(preset);
+    const spec = buildEntranceAnimationSpec(current, preset, {
+      supportsCustomGeometry: capabilities.supportsCustomGeometry,
+    });
+    void queueRef.current.enqueue(async () => {
+      await host.applyEntranceAnimations!(current.bentoId, spec);
+      showNotice(
+        'success',
+        preset === 'none'
+          ? 'Cleared entrance animations.'
+          : `Applied ${preset.replace('-', ' ')} entrance (${spec.orderedSlotIds.length} cards).`
+      );
+    });
   };
 
   // 1-click Library insertion from Entry (uses selected bounding shape if present, else Auto-Fits slide)
@@ -809,11 +956,16 @@ export function BentoTaskPane({
           <EntryView
             selection={selection}
             selectedIntent={selectedEntryIntent}
+            supportsMosaikafy={Boolean(capabilities.supportsMosaikafy && host.mosaikafySelection)}
+            savedBlueprints={savedBlueprints}
             isBusy={isSyncing}
             onSelectIntent={setSelectedEntryIntent}
             onCreateInSelected={handleCreateInSelected}
+            onMosaikafySelected={handleMosaikafySelected}
             onAutoFitSlide={handleAutoFitSlide}
             onInsertTemplate={handleInsertTemplate}
+            onInsertSavedBlueprint={handleInsertSavedBlueprint}
+            onDeleteSavedBlueprint={handleDeleteSavedBlueprint}
           />
         ) : isLibraryBrowserOpen ? (
           <>
@@ -849,8 +1001,13 @@ export function BentoTaskPane({
                 mode="swap"
                 activeIntent={docState.params.intent}
                 selectionBounds={docState.anchorRect}
+                savedBlueprints={savedBlueprints}
+                canSaveCurrent
                 isBusy={isSyncing}
                 onSelectTemplate={handleApplyTemplate}
+                onSelectSavedBlueprint={handleApplySavedBlueprint}
+                onDeleteSavedBlueprint={handleDeleteSavedBlueprint}
+                onSaveCurrentLayout={handleSaveCurrentLayout}
               />
             </div>
           </>
@@ -913,9 +1070,12 @@ export function BentoTaskPane({
                 state={docState}
                 capabilities={capabilities}
                 hasSingleSelectedCard={selectedSlots.length === 1}
+                activeMotionPreset={activeMotionPreset}
                 onSelectPreset={handleSelectPreset}
                 onSelectHierarchy={handleSelectHierarchy}
                 onSyncStyleFromSelected={handleSyncStyleFromSelected}
+                onApplyEntranceAnimation={handleApplyEntranceAnimation}
+                onSaveToLibrary={() => handleSaveCurrentLayout()}
                 onGenerateMultiSlides={handleGenerateMultiSlides}
                 onReorderReadingOrder={handleReorderReadingOrder}
                 onDetachBento={handleDetachBento}

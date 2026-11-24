@@ -122,3 +122,38 @@ export interface BentoTemplate {
   mirror?: 'horizontal' | 'vertical';
   slotHints?: readonly string[];
 }
+
+export type EntranceAnimationPreset =
+  | 'none'
+  | 'fade-cascade'
+  | 'rise-stagger'
+  | 'zoom-pop'
+  | 'wipe-editorial';
+
+export interface EntranceAnimationSpec {
+  preset: EntranceAnimationPreset;
+  durationSec: number;
+  staggerSec: number;
+  orderedSlotIds: string[];
+}
+
+export interface SavedBentoBlueprint {
+  id: string;
+  name: string;
+  createdAtIso: string;
+  intent: LayoutIntent;
+  cellCount: number;
+  docSnapshot: BentoDocumentState;
+}
+
+export interface ExistingShapeSummary {
+  shapeId: string;
+  rect: RectPt;
+  textLength: number;
+  hasImage?: boolean;
+}
+
+export interface MosaikafySlotAssignment {
+  sourceShapeId: string;
+  targetSlotId: string;
+}

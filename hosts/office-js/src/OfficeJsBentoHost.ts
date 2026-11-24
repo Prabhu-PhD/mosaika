@@ -10,6 +10,7 @@ import {
   type HostCapabilities,
   type IBentoHost,
   type LayoutDiffPayload,
+  type MosaikafyPayload,
   type MultiSlideItem,
   type RectPt,
   type SelectionContext,
@@ -148,6 +149,8 @@ export class OfficeJsBentoHost implements IBentoHost {
       supportsImageCropScrim: false,
       supportsSlideDuplication: false,
       supportsCustomGeometry: false,
+      supportsMosaikafy: true,
+      supportsEntranceAnimations: false,
     };
   }
 
@@ -202,7 +205,9 @@ export class OfficeJsBentoHost implements IBentoHost {
       }
 
       const selectedShapes = context.presentation.getSelectedShapes();
-      selectedShapes.load('items/id,items/left,items/top,items/width,items/height,items/tags/items');
+      selectedShapes.load(
+        'items/id,items/left,items/top,items/width,items/height,items/tags/items,items/fill/type,items/textFrame/textRange/text'
+      );
       slide.shapes.load('items/id,items/left,items/top,items/width,items/height,items/tags/items');
       await context.sync();
 
@@ -277,11 +282,27 @@ export class OfficeJsBentoHost implements IBentoHost {
             }
           : undefined;
 
+      const multiExisting =
+        selItems.length >= 2
+          ? selItems.map((sh) => ({
+              shapeId: sh.id,
+              rect: {
+                left: round2(sh.left),
+                top: round2(sh.top),
+                width: round2(sh.width),
+                height: round2(sh.height),
+              },
+              textLength: sh.textFrame?.textRange?.text?.length ?? 0,
+              hasImage: sh.fill?.type === 'Image',
+            }))
+          : undefined;
+
       return {
         slideId: slide.id,
         slideBounds,
         selectedShapeCount: selItems.length,
         ...(selectedShapeBounds ? { selectedShapeBounds } : {}),
+        ...(multiExisting ? { selectedShapes: multiExisting } : {}),
         survivingSlotIds: [],
         selectedSlotIds: [],
         hasDuplicateSlotConflict: false,
@@ -576,6 +597,52 @@ export class OfficeJsBentoHost implements IBentoHost {
       }
 
       await context.sync();
+    });
+  }
+
+  public async mosaikafySelection(payload: MosaikafyPayload): Promise<{ convertedCount: number }> {
+    const has110 = this.hasPowerPointApi110();
+
+    return this.runtime.run(async (context) => {
+      const { slide } = await this.resolveActiveSlideAndBounds(context, has110);
+      if (!slide) throw new Error('No active PowerPoint slide found.');
+
+      slide.shapes.load(
+        'items/id,items/name,items/left,items/top,items/width,items/height,items/tags/items,items/fill/type'
+      );
+      await context.sync();
+
+      const byId = new Map<string, OfficeShape>();
+      for (const sh of slide.shapes.items ?? []) {
+        byId.set(sh.id, sh);
+      }
+
+      const cellBySlot = new Map(payload.cells.map((c) => [c.slotId, c]));
+      const styleBySlot = new Map(payload.stylePayload.cells.map((c) => [c.slotId, c]));
+      let convertedCount = 0;
+
+      for (const assignment of payload.assignments) {
+        const shape = byId.get(assignment.sourceShapeId);
+        const spec = cellBySlot.get(assignment.targetSlotId);
+        if (!shape || !spec) continue;
+
+        shape.left = spec.rect.left;
+        shape.top = spec.rect.top;
+        shape.width = spec.rect.width;
+        shape.height = spec.rect.height;
+        applyCornerAdjustmentZeroBased(shape, spec.cornerAdjustment, has110);
+        applyDefaultTextFrame(shape);
+        writeCellMetadata(shape, spec);
+
+        const style = styleBySlot.get(spec.slotId);
+        if (style) {
+          applyCellStyleToShape(shape, style);
+        }
+        convertedCount += 1;
+      }
+
+      await context.sync();
+      return { convertedCount };
     });
   }
 }

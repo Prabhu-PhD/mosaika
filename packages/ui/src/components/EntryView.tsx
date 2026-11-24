@@ -1,27 +1,43 @@
 import { useState } from 'react';
-import type { BentoTemplate, LayoutIntent, SelectionContext } from '@bento/contract';
+import type {
+  BentoTemplate,
+  LayoutIntent,
+  SavedBentoBlueprint,
+  SelectionContext,
+} from '@bento/contract';
 import { computeAutoFitRect, getIntentDefinition } from '@bento/core';
+import { Sparkles } from 'lucide-react';
 import { IntentGrid } from './IntentPicker.js';
 import { LibraryView } from './LibraryView.js';
 
 export interface EntryViewProps {
   selection: SelectionContext | null;
   selectedIntent: LayoutIntent;
+  supportsMosaikafy: boolean;
+  savedBlueprints: readonly SavedBentoBlueprint[];
   isBusy: boolean;
   onSelectIntent: (intent: LayoutIntent) => void;
   onCreateInSelected: () => void;
+  onMosaikafySelected: () => void;
   onAutoFitSlide: () => void;
   onInsertTemplate: (template: BentoTemplate) => void;
+  onInsertSavedBlueprint: (blueprint: SavedBentoBlueprint) => void;
+  onDeleteSavedBlueprint: (id: string) => void;
 }
 
 export function EntryView({
   selection,
   selectedIntent,
+  supportsMosaikafy,
+  savedBlueprints,
   isBusy,
   onSelectIntent,
   onCreateInSelected,
+  onMosaikafySelected,
   onAutoFitSlide,
   onInsertTemplate,
+  onInsertSavedBlueprint,
+  onDeleteSavedBlueprint,
 }: EntryViewProps) {
   const [activeTab, setActiveTab] = useState<'intents' | 'library'>('intents');
 
@@ -30,6 +46,12 @@ export function EntryView({
     selection.selectedShapeCount === 1 &&
     selection.selectedShapeBounds !== undefined;
 
+  const canMosaikafy =
+    supportsMosaikafy &&
+    selection !== null &&
+    selection.selectedShapeCount >= 2 &&
+    (selection.selectedShapes?.length ?? 0) >= 2;
+
   const autoRect = computeAutoFitRect(
     selection?.slideBounds ?? { left: 0, top: 0, width: 960, height: 540 }
   );
@@ -37,9 +59,11 @@ export function EntryView({
   const dimsLabel =
     hasSingleShape && selection?.selectedShapeBounds
       ? `Selected · ${Math.round(selection.selectedShapeBounds.width)} × ${Math.round(selection.selectedShapeBounds.height)} pt`
-      : selection && selection.selectedShapeCount > 1
-        ? `${selection.selectedShapeCount} shapes · Auto-Fit`
-        : `Auto-Fit · ${Math.round(autoRect.width)} × ${Math.round(autoRect.height)} pt`;
+      : canMosaikafy && selection
+        ? `${selection.selectedShapeCount} shapes · Ready to Mosaika-fy`
+        : selection && selection.selectedShapeCount > 1
+          ? `${selection.selectedShapeCount} shapes · Auto-Fit`
+          : `Auto-Fit · ${Math.round(autoRect.width)} × ${Math.round(autoRect.height)} pt`;
 
   const intentDef = getIntentDefinition(selectedIntent);
 
@@ -97,8 +121,11 @@ export function EntryView({
           <LibraryView
             mode="insert"
             selectionBounds={hasSingleShape ? selection?.selectedShapeBounds : undefined}
+            savedBlueprints={savedBlueprints}
             isBusy={isBusy}
             onSelectTemplate={onInsertTemplate}
+            onSelectSavedBlueprint={onInsertSavedBlueprint}
+            onDeleteSavedBlueprint={onDeleteSavedBlueprint}
           />
         </div>
       ) : (
@@ -122,15 +149,28 @@ export function EntryView({
 
           {/* InfoGen Sticky Action Footer (1px solid --bento-fg anchor rule) */}
           <footer className="sticky bottom-0 z-10 flex shrink-0 flex-col gap-1.5 border-t border-[var(--bento-fg)] bg-[var(--bento-bg)] px-3 py-2.5">
-            <button
-              type="button"
-              disabled={isBusy}
-              onClick={onCreateInSelected}
-              data-testid="btn-create-bento"
-              className="flex h-[34px] w-full items-center justify-center rounded-[2px] bg-[var(--bento-fg)] px-3 text-[12.5px] font-semibold text-[var(--bento-accent-fg)] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              Create {intentDef.label} Layout
-            </button>
+            {canMosaikafy && selection ? (
+              <button
+                type="button"
+                disabled={isBusy}
+                onClick={onMosaikafySelected}
+                data-testid="btn-mosaikafy-selected"
+                className="flex h-[34px] w-full items-center justify-center gap-1.5 rounded-[2px] bg-[var(--bento-fg)] px-3 text-[12.5px] font-semibold text-[var(--bento-accent-fg)] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <Sparkles className="h-3.5 w-3.5" />
+                <span>Mosaika-fy {selection.selectedShapeCount} Selected Shapes</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                disabled={isBusy}
+                onClick={onCreateInSelected}
+                data-testid="btn-create-bento"
+                className="flex h-[34px] w-full items-center justify-center rounded-[2px] bg-[var(--bento-fg)] px-3 text-[12.5px] font-semibold text-[var(--bento-accent-fg)] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Create {intentDef.label} Layout
+              </button>
+            )}
 
             <button
               type="button"

@@ -117,6 +117,20 @@ namespace Mosaika.PowerPointAddIn.Rpc
                     return new { ok = true };
                 }
 
+                case "mosaikafySelection":
+                {
+                    var payload = RequireParams<MosaikafyPayloadDto>(rawParams, method);
+                    int convertedCount = _adapter.MosaikafySelection(payload);
+                    return new { convertedCount };
+                }
+
+                case "applyEntranceAnimations":
+                {
+                    var args = RequireParams<ApplyEntranceAnimationsParamsDto>(rawParams, method);
+                    _adapter.ApplyEntranceAnimations(args.BentoId, args.Spec);
+                    return new { ok = true };
+                }
+
                 default:
                     throw new ArgumentException($"Unknown RPC method \"{method}\".");
             }

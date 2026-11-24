@@ -4,6 +4,7 @@ import {
   type CellRole,
   type CellShapeKind,
   type CellStyleSpec,
+  type EntranceAnimationSpec,
   type HostCapabilities,
   type IBentoHost,
   type LayoutDiffPayload,
@@ -53,6 +54,8 @@ export interface StudioSnapshot {
   cards: StudioCard[];
   selectedCardIds: string[];
   activeDoc: BentoDocumentState | null;
+  activeAnimation: EntranceAnimationSpec | null;
+  animationRunId: number;
   version: number;
 }
 
@@ -79,6 +82,8 @@ const STUDIO_CAPABILITIES: HostCapabilities = {
   supportsImageCropScrim: true,
   supportsSlideDuplication: false,
   supportsCustomGeometry: true,
+  supportsMosaikafy: false,
+  supportsEntranceAnimations: true,
 };
 
 const DEFAULT_CARD_STYLE: CellStyleSpec = {
@@ -102,6 +107,8 @@ export class WebStudioHost implements IBentoHost {
   private cards: StudioCard[] = [];
   private selectedCardIds: string[] = [];
   private activeDoc: BentoDocumentState | null = null;
+  private activeAnimation: EntranceAnimationSpec | null = null;
+  private animationRunId = 0;
   private cardSeq = 1;
   private version = 1;
   private isDarkTheme = false;
@@ -298,6 +305,8 @@ export class WebStudioHost implements IBentoHost {
       cards: [...this.cards],
       selectedCardIds: [...this.selectedCardIds],
       activeDoc: this.activeDoc,
+      activeAnimation: this.activeAnimation,
+      animationRunId: this.animationRunId,
       version: this.version,
     };
   }
@@ -618,6 +627,15 @@ export class WebStudioHost implements IBentoHost {
 
   public async detachBento(_bentoId: string): Promise<void> {
     this.clearCanvas();
+  }
+
+  public async applyEntranceAnimations(
+    _bentoId: string,
+    spec: EntranceAnimationSpec
+  ): Promise<void> {
+    this.activeAnimation = spec.preset === 'none' ? null : spec;
+    this.animationRunId += 1;
+    this.emitChange(false);
   }
 
   public onSelectionChanged(handler: () => void): () => void {

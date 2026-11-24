@@ -9,7 +9,9 @@ export type BentoRpcMethod =
   | 'setImageSlot'
   | 'generateMultiSlides'
   | 'reorderReadingOrder'
-  | 'detachBento';
+  | 'detachBento'
+  | 'mosaikafySelection'
+  | 'applyEntranceAnimations';
 
 export interface BentoRpcRequest<TParams = unknown> {
   id: string;

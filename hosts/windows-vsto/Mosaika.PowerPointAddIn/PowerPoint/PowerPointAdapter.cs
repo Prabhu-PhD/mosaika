@@ -42,7 +42,9 @@ namespace Mosaika.PowerPointAddIn.PowerPoint
                 SupportsSelectionEvents = true,
                 SupportsImageCropScrim = true,
                 SupportsSlideDuplication = true,
-                SupportsCustomGeometry = true
+                SupportsCustomGeometry = true,
+                SupportsMosaikafy = true,
+                SupportsEntranceAnimations = true
             };
         }
 
@@ -138,6 +140,27 @@ namespace Mosaika.PowerPointAddIn.PowerPoint
                     Width = sh.Width,
                     Height = sh.Height
                 };
+            }
+            else if (selectedShapes.Count >= 2)
+            {
+                ctx.SelectedShapes = new List<ExistingShapeSummaryDto>();
+                foreach (var sh in selectedShapes)
+                {
+                    string txt = ReadShapeText(sh);
+                    ctx.SelectedShapes.Add(new ExistingShapeSummaryDto
+                    {
+                        ShapeId = sh.Id.ToString(),
+                        Rect = new RectPtDto
+                        {
+                            Left = sh.Left,
+                            Top = sh.Top,
+                            Width = sh.Width,
+                            Height = sh.Height
+                        },
+                        TextLength = txt?.Length ?? 0,
+                        HasImage = sh.Fill.Type == MsoFillType.msoFillPicture
+                    });
+                }
             }
 
             return ctx;
@@ -423,6 +446,172 @@ namespace Mosaika.PowerPointAddIn.PowerPoint
             foreach (var shape in shapesBySlot.Values)
             {
                 StripBentoTags(shape);
+            }
+        }
+
+        public int MosaikafySelection(MosaikafyPayloadDto payload)
+        {
+            if (payload == null) throw new ArgumentNullException(nameof(payload));
+            var slide = GetActiveSlide(throwIfMissing: true);
+
+            if (payload.CommitUndoEntry)
+            {
+                _app.StartNewUndoEntry();
+            }
+
+            var shapeById = new Dictionary<string, PowerPointInterop.Shape>(StringComparer.Ordinal);
+            foreach (PowerPointInterop.Shape sh in slide.Shapes)
+            {
+                shapeById[sh.Id.ToString()] = sh;
+            }
+
+            var cellBySlot = new Dictionary<string, CellRenderSpecDto>(StringComparer.Ordinal);
+            foreach (var cell in payload.Cells)
+            {
+                cellBySlot[cell.SlotId] = cell;
+            }
+
+            var styleBySlot = new Dictionary<string, CellStyleSpecDto>(StringComparer.Ordinal);
+            if (payload.StylePayload?.Cells != null)
+            {
+                foreach (var st in payload.StylePayload.Cells)
+                {
+                    styleBySlot[st.SlotId] = st;
+                }
+            }
+
+            int convertedCount = 0;
+            PowerPointInterop.Shape firstConverted = null;
+
+            foreach (var assignment in payload.Assignments)
+            {
+                if (!shapeById.TryGetValue(assignment.SourceShapeId, out var shape)) continue;
+                if (!cellBySlot.TryGetValue(assignment.TargetSlotId, out var spec)) continue;
+
+                // Non-destructively re-home existing slide shape into the computed Bento cell
+                shape.Left = spec.Rect.Left;
+                shape.Top = spec.Rect.Top;
+                shape.Width = Math.Max(1f, spec.Rect.Width);
+                shape.Height = Math.Max(1f, spec.Rect.Height);
+
+                if (shape.Type == MsoShapeType.msoAutoShape)
+                {
+                    try
+                    {
+                        shape.AutoShapeType = GeometryBuilder.ResolveNativeAutoShapeType(spec.ShapeKind);
+                        ApplySafeCornerAdjustment(shape, spec.CornerAdjustment, spec.ShapeKind);
+                    }
+                    catch
+                    {
+                        // Preserve exotic shape geometry if AutoShapeType cannot be reassigned
+                    }
+                }
+
+                ConfigureDefaultTextFrame(shape);
+                ApplyShapeMetadata(shape, spec);
+
+                if (styleBySlot.TryGetValue(spec.SlotId, out var style))
+                {
+                    ApplyCellStyle(shape, style);
+                }
+
+                if (firstConverted == null)
+                {
+                    firstConverted = shape;
+                }
+                convertedCount += 1;
+            }
+
+            if (firstConverted != null)
+            {
+                firstConverted.Select(MsoTriState.msoTrue);
+            }
+
+            return convertedCount;
+        }
+
+        public void ApplyEntranceAnimations(string bentoId, EntranceAnimationSpecDto spec)
+        {
+            if (spec == null) throw new ArgumentNullException(nameof(spec));
+            var slide = GetActiveSlide(throwIfMissing: true);
+            var shapesBySlot = FindBentoShapesBySlot(slide, bentoId);
+            if (shapesBySlot.Count == 0) return;
+
+            _app.StartNewUndoEntry();
+
+            var targetIds = new HashSet<int>();
+            foreach (var sh in shapesBySlot.Values)
+            {
+                targetIds.Add(sh.Id);
+            }
+
+            // Clear existing MainSequence effects targeting these Bento shapes (reverse index loop)
+            var mainSeq = slide.TimeLine.MainSequence;
+            for (int i = mainSeq.Count; i >= 1; i--)
+            {
+                var eff = mainSeq[i];
+                if (eff.Shape != null && targetIds.Contains(eff.Shape.Id))
+                {
+                    eff.Delete();
+                }
+            }
+
+            if (string.IsNullOrEmpty(spec.Preset) || spec.Preset == "none")
+            {
+                return;
+            }
+
+            var effectType = ResolveAnimationEffect(spec.Preset);
+            float duration = Math.Max(0.15f, Math.Min(2.0f, spec.DurationSec));
+            float stagger = Math.Max(0.0f, Math.Min(1.0f, spec.StaggerSec));
+
+            int idx = 0;
+            foreach (string slotId in spec.OrderedSlotIds)
+            {
+                if (!shapesBySlot.TryGetValue(slotId, out var shape)) continue;
+
+                var trigger = idx == 0
+                    ? PowerPointInterop.MsoAnimTriggerType.msoAnimTriggerOnPageClick
+                    : PowerPointInterop.MsoAnimTriggerType.msoAnimTriggerWithPrevious;
+
+                var effect = mainSeq.AddEffect(
+                    shape,
+                    effectType,
+                    PowerPointInterop.MsoAnimateByLevel.msoAnimateLevelNone,
+                    trigger);
+
+                effect.Timing.Duration = duration;
+                effect.Timing.TriggerDelayTime = idx * stagger;
+
+                if (spec.Preset == "wipe-editorial")
+                {
+                    try
+                    {
+                        effect.EffectParameters.Direction = PowerPointInterop.MsoAnimDirection.msoAnimDirectionLeft;
+                    }
+                    catch
+                    {
+                        // Ignore if effect does not support direction
+                    }
+                }
+
+                idx += 1;
+            }
+        }
+
+        private static PowerPointInterop.MsoAnimEffect ResolveAnimationEffect(string preset)
+        {
+            switch (preset)
+            {
+                case "rise-stagger":
+                    return PowerPointInterop.MsoAnimEffect.msoAnimEffectFly;
+                case "zoom-pop":
+                    return PowerPointInterop.MsoAnimEffect.msoAnimEffectZoom;
+                case "wipe-editorial":
+                    return PowerPointInterop.MsoAnimEffect.msoAnimEffectWipe;
+                case "fade-cascade":
+                default:
+                    return PowerPointInterop.MsoAnimEffect.msoAnimEffectFade;
             }
         }
 

@@ -8,9 +8,11 @@ import {
   type CellRole,
   type CellShapeKind,
   type CellStyleSpec,
+  type EntranceAnimationSpec,
   type HostCapabilities,
   type IBentoHost,
   type LayoutDiffPayload,
+  type MosaikafyPayload,
   type MultiSlideItem,
   type RectPt,
   type SelectionContext,
@@ -37,6 +39,8 @@ export const CAPABILITY_PROFILES: Record<CapabilityProfileId, HostCapabilities> 
     supportsImageCropScrim: true,
     supportsSlideDuplication: true,
     supportsCustomGeometry: true,
+    supportsMosaikafy: true,
+    supportsEntranceAnimations: true,
   },
   'officejs-110': {
     platform: 'officejs',
@@ -49,6 +53,8 @@ export const CAPABILITY_PROFILES: Record<CapabilityProfileId, HostCapabilities> 
     supportsImageCropScrim: false,
     supportsSlideDuplication: false,
     supportsCustomGeometry: false,
+    supportsMosaikafy: true,
+    supportsEntranceAnimations: false,
   },
   'officejs-14': {
     platform: 'officejs',
@@ -61,6 +67,8 @@ export const CAPABILITY_PROFILES: Record<CapabilityProfileId, HostCapabilities> 
     supportsImageCropScrim: false,
     supportsSlideDuplication: false,
     supportsCustomGeometry: false,
+    supportsMosaikafy: true,
+    supportsEntranceAnimations: false,
   },
 };
 
@@ -93,6 +101,7 @@ export interface MockSlide {
   hasChrome: boolean;
   shapes: MockShape[];
   selectedShapeIds: string[];
+  activeAnimation?: EntranceAnimationSpec | null;
 }
 
 export interface DeckSnapshot {
@@ -449,11 +458,22 @@ export class MockBentoHost implements IBentoHost {
         ? selectedShapes[0]!
         : undefined;
 
+    const multiExisting =
+      selectedShapes.length >= 2
+        ? selectedShapes.map((s) => ({
+            shapeId: s.id,
+            rect: { ...s.rect },
+            textLength: s.text.length,
+            hasImage: Boolean(s.imageDataUrl),
+          }))
+        : undefined;
+
     return {
       slideId: slide.id,
       slideBounds: { ...SLIDE_BOUNDS },
       selectedShapeCount: selectedShapes.length,
       selectedShapeBounds: singlePlaceholder ? { ...singlePlaceholder.rect } : undefined,
+      selectedShapes: multiExisting,
       survivingSlotIds: [],
       selectedSlotIds: [],
       hasDuplicateSlotConflict: false,
@@ -712,6 +732,78 @@ export class MockBentoHost implements IBentoHost {
       sh.locked = false;
     }
     this.emitSelectionChange();
+  }
+
+  public async mosaikafySelection(payload: MosaikafyPayload): Promise<{ convertedCount: number }> {
+    const slide = this.getActiveSlide();
+    const caps = this.getCapabilitiesSync();
+    const cellBySlot = new Map(payload.cells.map((c) => [c.slotId, c]));
+    const styleBySlot = new Map(payload.stylePayload.cells.map((c) => [c.slotId, c]));
+    const assignedSlots = new Set<string>();
+    const convertedIds: string[] = [];
+
+    for (const assignment of payload.assignments) {
+      const target = slide.shapes.find((s) => s.id === assignment.sourceShapeId);
+      const spec = cellBySlot.get(assignment.targetSlotId);
+      if (!target || !spec) continue;
+
+      target.kind = 'bento-card';
+      target.rect = { ...spec.rect };
+      target.cornerAdjustment = caps.supportsCornerRadius ? spec.cornerAdjustment : 0;
+      target.shapeKind = caps.supportsCustomGeometry ? spec.shapeKind : undefined;
+      target.svgPath = caps.supportsCustomGeometry ? spec.svgPath : undefined;
+      target.shapeName = spec.shapeName;
+      target.role = spec.role;
+      target.locked = spec.locked;
+      target.zOrderIndex = spec.zOrderIndex;
+      target.contentHint = spec.contentHint;
+      target.tags = { ...spec.tags };
+      const style = styleBySlot.get(spec.slotId);
+      if (style) {
+        target.style = target.imageDataUrl ? { ...style, textColorHex: '#FFFFFF' } : { ...style };
+      }
+
+      assignedSlots.add(spec.slotId);
+      convertedIds.push(target.id);
+    }
+
+    // Create any unassigned slots (e.g., sculpted companion/hub tiles)
+    for (const spec of payload.cells) {
+      if (assignedSlots.has(spec.slotId)) continue;
+      const id = `shape_${this.shapeSeq++}`;
+      slide.shapes.push({
+        id,
+        kind: 'bento-card',
+        rect: { ...spec.rect },
+        cornerAdjustment: caps.supportsCornerRadius ? spec.cornerAdjustment : 0,
+        shapeKind: caps.supportsCustomGeometry ? spec.shapeKind : undefined,
+        svgPath: caps.supportsCustomGeometry ? spec.svgPath : undefined,
+        shapeName: spec.shapeName,
+        role: spec.role,
+        locked: spec.locked,
+        zOrderIndex: spec.zOrderIndex,
+        contentHint: spec.contentHint,
+        tags: { ...spec.tags },
+        text: '',
+        style: styleBySlot.get(spec.slotId) ?? { ...DEFAULT_CARD_STYLE, slotId: spec.slotId },
+      });
+    }
+
+    slide.shapes.sort((a, b) => a.zOrderIndex - b.zOrderIndex);
+    if (convertedIds.length > 0) {
+      slide.selectedShapeIds = [convertedIds[0]!];
+    }
+    this.emitSelectionChange();
+    return { convertedCount: convertedIds.length };
+  }
+
+  public async applyEntranceAnimations(
+    _bentoId: string,
+    spec: EntranceAnimationSpec
+  ): Promise<void> {
+    const slide = this.getActiveSlide();
+    slide.activeAnimation = spec.preset === 'none' ? null : spec;
+    this.emitDeckChange();
   }
 
   public onSelectionChanged(handler: () => void): () => void {
