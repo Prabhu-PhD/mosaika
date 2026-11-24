@@ -1,0 +1,144 @@
+import { describe, expect, it } from 'vitest';
+import { createIntentBentoDocument, buildCellRenderSpecs } from '@bento/core';
+import {
+  decodeSharePayload,
+  encodeSharePayload,
+  exportToHtmlTailwind,
+  exportToSvg,
+} from '../src/exporters.js';
+import { computeArtboardContentRect } from '../src/presets.js';
+import { WebStudioHost } from '../src/studioHost.js';
+
+describe('Mosaika Web Studio — exporters & live reflow', () => {
+  it('exports valid pure-vector SVG with wrapped <tspan>, XML escaping, and zero <foreignObject>', () => {
+    const host = new WebStudioHost({ skipDefaultSeed: false });
+    const firstCard = host.getSnapshot().cards[0]!;
+    host.updateCardText(firstCard.id, 'Q4 Growth & Metrics <2026>\nRevenue > "Target" & $10M ARR');
+
+    const svg = exportToSvg(host.getSnapshot());
+
+    expect(svg.startsWith('<svg xmlns="http://www.w3.org/2000/svg"')).toBe(true);
+    expect(svg.endsWith('</svg>')).toBe(true);
+    expect(svg).not.toContain('<foreignObject');
+    expect(svg).toContain('width="1440" height="900" viewBox="0 0 1440 900"');
+    expect(svg).toContain('<tspan');
+    expect(svg).toContain('Q4 Growth &amp; Metrics &lt;2026&gt;');
+    expect(svg).toContain('Revenue &gt; &quot;Target&quot; &amp; $10M ARR');
+  });
+
+  it('exports custom <path> geometry for sculpted/puzzle L-wrap and circular layouts', () => {
+    const host = new WebStudioHost({ skipDefaultSeed: true });
+    const rect = computeArtboardContentRect(1080, 1080, 44);
+    const puzzleDoc = createIntentBentoDocument(rect, 'puzzle', {
+      count: 5,
+      gutterPt: 14,
+      radiusPt: 16,
+      seed: 101,
+    });
+    expect(puzzleDoc.ok).toBe(true);
+    if (!puzzleDoc.ok) return;
+
+    host.hydrateFromSharePayload({
+      w: 1080,
+      h: 1080,
+      pad: 44,
+      bg: '#FFFFFF',
+      accent: '#2563EB',
+      state: puzzleDoc.value,
+      texts: { slot_01: 'Interlocking Puzzle' },
+    });
+
+    const specs = buildCellRenderSpecs(puzzleDoc.value, { supportsCustomGeometry: true });
+    expect(specs.some((s) => Boolean(s.svgPath))).toBe(true);
+
+    const svg = exportToSvg(host.getSnapshot());
+    expect(svg).toContain('<path d="');
+    expect(svg).toContain('Interlocking Puzzle');
+  });
+
+  it('exports responsive HTML + Tailwind markup with aspect-ratio and percentage positioning', () => {
+    const host = new WebStudioHost({ skipDefaultSeed: false });
+    const card = host.getSnapshot().cards[0]!;
+    host.updateCardText(card.id, 'Launch <Hero> & Copy\nSecond line "ready"');
+
+    const html = exportToHtmlTailwind(host.getSnapshot());
+
+    expect(html).toContain('aspect-ratio: 1440 / 900;');
+    expect(html).toContain('max-width: 1440px;');
+    expect(html).toContain('left:');
+    expect(html).toContain('width:');
+    expect(html).toContain('Launch &lt;Hero&gt; &amp; Copy');
+    expect(html).toContain('Second line &quot;ready&quot;');
+  });
+
+  it('round-trips ShareableStudioPayload via UTF-8 safe base64url encoding', () => {
+    const host = new WebStudioHost({ skipDefaultSeed: false });
+    const card = host.getSnapshot().cards[0]!;
+    host.updateCardText(card.id, 'Mosaika — Zürich Grid ✨ 100%');
+    host.setBrandAccent('#2563EB');
+
+    const payload = host.toSharePayload();
+    expect(payload).not.toBeNull();
+    if (!payload) return;
+
+    const encoded = encodeSharePayload(payload);
+    expect(encoded).not.toMatch(/[+/=]/);
+
+    const decoded = decodeSharePayload(`#mosaika=${encoded}`);
+    expect(decoded).not.toBeNull();
+    expect(decoded?.w).toBe(1440);
+    expect(decoded?.h).toBe(900);
+    expect(decoded?.accent).toBe('#2563EB');
+    expect(decoded?.texts[card.slotId]).toBe('Mosaika — Zürich Grid ✨ 100%');
+    expect(decoded?.state.bentoId).toBe(payload.state.bentoId);
+
+    expect(decodeSharePayload('not-valid-base64!!!')).toBeNull();
+  });
+
+  it('caches getSnapshot() referentially for React useSyncExternalStore stability', () => {
+    const host = new WebStudioHost({ skipDefaultSeed: false });
+    const s1 = host.getSnapshot();
+    const s2 = host.getSnapshot();
+    expect(s1).toBe(s2);
+
+    host.setBrandAccent('#2563EB');
+    const s3 = host.getSnapshot();
+    expect(s3).not.toBe(s1);
+    expect(host.getSnapshot()).toBe(s3);
+  });
+
+  it('reflows live across canvas sizes while preserving card copy and Brand Accent WCAG contrast', () => {
+    const host = new WebStudioHost({ skipDefaultSeed: false });
+    const hero = host.getSnapshot().cards.find((c) => c.role === 'hero')!;
+    host.updateCardText(hero.id, 'Persistent Hero Headline');
+
+    // Switch to bright amber accent -> dark ink or crisp contrast
+    host.setBrandAccent('#2563EB');
+    const cobaltHero = host.getSnapshot().cards.find((c) => c.role === 'hero')!;
+    expect(cobaltHero.style.fillHex).toBe('#2563EB');
+    expect(cobaltHero.style.textColorHex).toBe('#FFFFFF');
+
+    // Reflow 1440x900 -> Instagram Square 1080x1080
+    host.selectPreset('ig-square');
+    const sq = host.getSnapshot();
+    expect(sq.canvasWidth).toBe(1080);
+    expect(sq.canvasHeight).toBe(1080);
+    expect(sq.cards.find((c) => c.slotId === hero.slotId)?.text).toBe('Persistent Hero Headline');
+    for (const c of sq.cards) {
+      expect(c.rect.left).toBeGreaterThanOrEqual(43.9);
+      expect(c.rect.left + c.rect.width).toBeLessThanOrEqual(1080 - 43.9);
+      expect(c.rect.top + c.rect.height).toBeLessThanOrEqual(1080 - 43.9);
+    }
+
+    // Reflow -> A4 Portrait 794x1123
+    host.selectPreset('a4-portrait');
+    const a4 = host.getSnapshot();
+    expect(a4.canvasWidth).toBe(794);
+    expect(a4.canvasHeight).toBe(1123);
+    expect(a4.cards.find((c) => c.slotId === hero.slotId)?.text).toBe('Persistent Hero Headline');
+    for (const c of a4.cards) {
+      expect(c.rect.left + c.rect.width).toBeLessThanOrEqual(794 - 43.9);
+      expect(c.rect.top + c.rect.height).toBeLessThanOrEqual(1123 - 43.9);
+    }
+  });
+});
