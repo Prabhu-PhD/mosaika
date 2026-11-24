@@ -1,0 +1,150 @@
+/* Project Bento Taskpane Design System — InfoGen Crisp Fluent Swiss Mode */
+.bento-pane[data-bento-theme='light'],
+.bento-pane {
+  --bento-bg: #ffffff;
+  --bento-surface: #ffffff;
+  --bento-well: #f4f5f4;
+  --bento-border: #dadddb;
+  --bento-border-strong: #b9bdbb;
+  --bento-fg: #1b1d1e;
+  --bento-fg-muted: #5b6164;
+  --bento-hover: #f4f5f4;
+  --bento-accent: #1b1d1e;
+  --bento-accent-fg: #ffffff;
+  --bento-accent-soft: #ebebea;
+  --bento-danger: #a32a1e;
+  --bento-warn-bg: #fff4de;
+  --bento-warn-border: #c98a1a;
+  --bento-warn-text: #4a3000;
+  --bento-track: #dadddb;
+  --bento-radius: 2px;
+  font-family: 'Segoe UI', -apple-system, 'SF Pro Text', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.bento-pane[data-bento-theme='dark'] {
+  --bento-bg: #111313;
+  --bento-surface: #171a1a;
+  --bento-well: #0d0f0f;
+  --bento-border: #2b302e;
+  --bento-border-strong: #434b48;
+  --bento-fg: #e6e9e7;
+  --bento-fg-muted: #9da4a1;
+  --bento-hover: #1e2221;
+  --bento-accent: #e6e9e7;
+  --bento-accent-fg: #111313;
+  --bento-accent-soft: #232827;
+  --bento-danger: #e05a4b;
+  --bento-warn-bg: #2a210e;
+  --bento-warn-border: #c98a1a;
+  --bento-warn-text: #fde6b0;
+  --bento-track: #2b302e;
+  --bento-radius: 2px;
+  font-family: 'Segoe UI', -apple-system, 'SF Pro Text', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Monochrome architectural range slider */
+.bento-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 3px;
+  border-radius: 1px;
+  background: linear-gradient(
+    to right,
+    var(--bento-fg) 0%,
+    var(--bento-fg) var(--slider-pct, 0%),
+    var(--bento-track) var(--slider-pct, 0%),
+    var(--bento-track) 100%
+  );
+  outline: none;
+  cursor: pointer;
+}
+
+.bento-slider:disabled {
+  background: var(--bento-track);
+}
+
+.bento-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 1px;
+  background: var(--bento-bg);
+  border: 2px solid var(--bento-fg);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.14);
+  transition: transform 0.1s ease, background-color 0.1s ease;
+}
+
+.bento-slider:hover:not(:disabled)::-webkit-slider-thumb {
+  transform: scale(1.1);
+}
+
+.bento-slider:active:not(:disabled)::-webkit-slider-thumb {
+  background: var(--bento-fg);
+}
+
+.bento-slider::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 1px;
+  background: var(--bento-bg);
+  border: 2px solid var(--bento-fg);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.14);
+}
+
+/* InfoGen-style crisp segmented control (1px solid --bento-fg, 0px radius) */
+.bento-segmented {
+  display: grid;
+  width: 100%;
+}
+
+.bento-seg-btn {
+  height: 26px;
+  background: var(--bento-bg);
+  border: 1px solid var(--bento-fg);
+  border-right: 0;
+  color: var(--bento-fg);
+  cursor: pointer;
+  transition: background-color 0.1s ease, color 0.1s ease;
+}
+
+.bento-seg-btn:last-child {
+  border-right: 1px solid var(--bento-fg);
+}
+
+.bento-seg-btn:hover:not(:disabled):not(.is-active):not([data-active='true']) {
+  background: var(--bento-well);
+}
+
+.bento-seg-btn.is-active,
+.bento-seg-btn[data-active='true'] {
+  background: var(--bento-fg);
+  color: var(--bento-accent-fg);
+  font-weight: 600;
+}
+
+.bento-seg-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* Smooth 3s toast auto-dismiss progress hairline */
+@keyframes bento-toast-drain {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
+}
+
+.bento-toast-progress {
+  transform-origin: left center;
+  animation: bento-toast-drain var(--toast-duration, 3000ms) linear forwards;
+}
+
+.bento-toast-container:hover .bento-toast-progress {
+  animation-play-state: paused;
+}

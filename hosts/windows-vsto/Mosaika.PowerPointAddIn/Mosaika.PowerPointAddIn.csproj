@@ -1,0 +1,49 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- Rule 7: Strictly target .NET Framework 4.8 for Windows VSTO / COM PowerPoint Add-in -->
+    <TargetFramework>net48</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>Mosaika.PowerPointAddIn</RootNamespace>
+    <AssemblyName>Mosaika.PowerPointAddIn</AssemblyName>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    <Deterministic>true</Deterministic>
+    <OfficePiaDir Condition="'$(OfficePiaDir)' == ''">C:\Program Files (x86)\Microsoft Visual Studio\Shared\Visual Studio Tools for Office\PIA\Office15</OfficePiaDir>
+    <ExtensibilityDllPath Condition="'$(ExtensibilityDllPath)' == ''">C:\Program Files (x86)\Common Files\Microsoft Shared\MSEnv\PublicAssemblies\extensibility.dll</ExtensibilityDllPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2903.40" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="Microsoft.Office.Interop.PowerPoint">
+      <HintPath>$(OfficePiaDir)\Microsoft.Office.Interop.PowerPoint.dll</HintPath>
+      <EmbedInteropTypes>True</EmbedInteropTypes>
+    </Reference>
+    <Reference Include="Office">
+      <HintPath>$(OfficePiaDir)\Office.dll</HintPath>
+      <EmbedInteropTypes>True</EmbedInteropTypes>
+    </Reference>
+    <Reference Include="Extensibility">
+      <HintPath>$(ExtensibilityDllPath)</HintPath>
+      <EmbedInteropTypes>True</EmbedInteropTypes>
+    </Reference>
+    <Reference Include="Microsoft.CSharp" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Ribbon.xml" />
+  </ItemGroup>
+
+  <!-- Bundle compiled @bento/vsto-web assets directly into bin/.../webview/ for bento.local virtual host -->
+  <ItemGroup Condition="Exists('..\web\dist')">
+    <Content Include="..\web\dist\**\*.*">
+      <Link>webview\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+</Project>

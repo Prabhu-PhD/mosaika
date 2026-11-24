@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<customUI xmlns="http://schemas.microsoft.com/office/2009/07/customui" onLoad="OnRibbonLoad">
+  <ribbon>
+    <tabs>
+      <tab idMso="TabHome">
+        <group id="MosaikaGroup" label="Mosaika">
+          <toggleButton
+            id="ToggleMosaikaPane"
+            label="Mosaika"
+            size="large"
+            screentip="Open Mosaika Bento Studio"
+            supertip="Create and edit bounded, non-destructive Swiss bento grid layouts on the active slide."
+            getImage="GetMosaikaIcon"
+            getPressed="GetTaskPanePressed"
+            onAction="OnToggleTaskPane" />
+        </group>
+      </tab>
+    </tabs>
+  </ribbon>
+</customUI>
