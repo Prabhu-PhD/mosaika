@@ -328,6 +328,8 @@ export function App() {
           showGridOverlay={showGridOverlay}
           onSelectCards={(ids) => host.selectCards(ids)}
           onUpdateCardText={(cardId, text) => host.updateCardText(cardId, text)}
+          onSetCardBlockType={(cardId, bt) => host.setCardBlockType(cardId, bt)}
+          onSetCardSurfaceTreatment={(cardId, surf) => host.setCardSurfaceTreatment(cardId, surf)}
           onSetCardImage={(cardId, dataUrl) => host.setCardImageDataUrl(cardId, dataUrl, true)}
           onDeleteCard={(cardId) => host.deleteCardById(cardId)}
           onResizeSplit={(nodeId, ratio, snap, commit) =>

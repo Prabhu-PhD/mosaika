@@ -10,6 +10,7 @@ import {
   exportToHtmlTailwind,
   exportToSvg,
 } from '../src/exporters.js';
+import { exportToPptxBytes } from '../src/pptxExporter.js';
 import { computeArtboardContentRect } from '../src/presets.js';
 import { WebStudioHost } from '../src/studioHost.js';
 
@@ -160,5 +161,54 @@ describe('Mosaika Web Studio — exporters & live reflow', () => {
     expect(html).toContain('@keyframes mosaika-enter');
     expect(html).toContain('translateY(24px)');
     expect(html).toContain('animation: mosaika-enter 0.5s');
+  });
+
+  it('exports valid native PowerPoint (.pptx) ZIP archives across landscape and square presets', async () => {
+    const host = new WebStudioHost({ skipDefaultSeed: false });
+    const bytes = await exportToPptxBytes(host.getSnapshot());
+
+    // OOXML .pptx is a ZIP archive starting with PK\x03\x04
+    expect(bytes.byteLength).toBeGreaterThan(8_000);
+    expect(bytes[0]).toBe(0x50); // 'P'
+    expect(bytes[1]).toBe(0x4b); // 'K'
+    expect(bytes[2]).toBe(0x03);
+    expect(bytes[3]).toBe(0x04);
+
+    // Check archive central directory / entry names include PowerPoint slide1.xml
+    const ascii = new TextDecoder('latin1').decode(bytes);
+    expect(ascii).toContain('ppt/slides/slide1.xml');
+    expect(ascii).toContain('[Content_Types].xml');
+
+    // Also verify square Instagram 1080x1080 preset exports cleanly
+    host.selectPreset('ig-square');
+    const sqBytes = await exportToPptxBytes(host.getSnapshot());
+    expect(sqBytes.byteLength).toBeGreaterThan(8_000);
+    expect(sqBytes[0]).toBe(0x50);
+    expect(sqBytes[1]).toBe(0x4b);
+  });
+
+  it('renders KPI blocks, Checklists, and Mesh/Sheen gradients in SVG, HTML, and share payloads', () => {
+    const host = new WebStudioHost({ skipDefaultSeed: false });
+    const cards = host.getSnapshot().cards;
+    host.setCardSurfaceTreatment(cards[0]!.id, 'mesh');
+    host.setCardBlockType(cards[1]!.id, 'kpi');
+    host.setCardBlockType(cards[2]!.id, 'checklist');
+
+    const snap = host.getSnapshot();
+    const svg = exportToSvg(snap);
+    expect(svg).toContain('<linearGradient id="grad-');
+    expect(svg).toContain('<radialGradient id="mesh-');
+    expect(svg).toContain('✓  ');
+
+    const html = exportToHtmlTailwind(snap);
+    expect(html).toContain('radial-gradient(');
+    expect(html).toContain('tabular-nums');
+    expect(html).toContain('<ul class="mt-2');
+
+    const encoded = encodeSharePayload(host.toSharePayload()!);
+    const decoded = decodeSharePayload(encoded);
+    expect(decoded?.blocks?.[cards[1]!.slotId]).toBe('kpi');
+    expect(decoded?.blocks?.[cards[2]!.slotId]).toBe('checklist');
+    expect(decoded?.surfaces?.[cards[0]!.slotId]).toBe('mesh');
   });
 });

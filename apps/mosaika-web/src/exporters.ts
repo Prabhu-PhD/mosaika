@@ -1,3 +1,9 @@
+import {
+  buildCardCssBackground,
+  computeGradientStops,
+  parseChecklistBlock,
+  parseKpiBlock,
+} from './cardBlocks.js';
 import type { ShareableStudioPayload, StudioCard, StudioSnapshot } from './studioHost.js';
 
 function escapeXml(value: string): string {
@@ -120,13 +126,39 @@ export function exportToSvg(snapshot: StudioSnapshot): string {
   for (const card of cards) {
     const clipId = `clip-${card.slotId}`;
     const rx = +(card.cornerAdjustment * Math.min(card.rect.width, card.rect.height)).toFixed(2);
-    const fill = card.style.fillHex ? escapeXml(card.style.fillHex) : 'none';
+    const hasGrad = Boolean(
+      card.style.fillHex && card.surfaceTreatment && card.surfaceTreatment !== 'solid'
+    );
+    const fill = hasGrad
+      ? `url(#grad-${card.slotId})`
+      : card.style.fillHex
+        ? escapeXml(card.style.fillHex)
+        : 'none';
     const stroke =
       card.style.borderColorHex && card.style.borderWeightPt > 0
         ? hexToRgba(card.style.borderColorHex, card.style.borderTransparency)
         : 'none';
     const dashAttr = card.style.borderDashed ? ` stroke-dasharray="6 4"` : '';
     const filterAttr = card.style.shadow ? ` filter="url(#mosaika-shadow)"` : '';
+
+    if (hasGrad && card.style.fillHex) {
+      const stops = computeGradientStops(card.style.fillHex);
+      defs.push(
+        `<linearGradient id="grad-${card.slotId}" x1="0%" y1="0%" x2="100%" y2="100%">` +
+          `<stop offset="0%" stop-color="${stops.startHex}"/>` +
+          `<stop offset="52%" stop-color="${stops.midHex}"/>` +
+          `<stop offset="100%" stop-color="${stops.endHex}"/>` +
+          `</linearGradient>`
+      );
+      if (card.surfaceTreatment === 'mesh') {
+        defs.push(
+          `<radialGradient id="mesh-${card.slotId}" cx="85%" cy="18%" r="62%">` +
+            `<stop offset="0%" stop-color="${stops.glowHex}" stop-opacity="0.42"/>` +
+            `<stop offset="100%" stop-color="${stops.glowHex}" stop-opacity="0"/>` +
+            `</radialGradient>`
+        );
+      }
+    }
 
     if (card.svgPath) {
       defs.push(
@@ -146,6 +178,12 @@ export function exportToSvg(snapshot: StudioSnapshot): string {
     } else {
       cardParts.push(
         `<rect x="${card.rect.left}" y="${card.rect.top}" width="${card.rect.width}" height="${card.rect.height}" rx="${rx}" ry="${rx}" fill="${fill}" stroke="${stroke}" stroke-width="${card.style.borderWeightPt}"${dashAttr}${filterAttr}/>`
+      );
+    }
+
+    if (hasGrad && card.surfaceTreatment === 'mesh') {
+      cardParts.push(
+        `<g clip-path="url(#${clipId})"><rect x="${card.rect.left}" y="${card.rect.top}" width="${card.rect.width}" height="${card.rect.height}" fill="url(#mesh-${card.slotId})"/></g>`
       );
     }
 
@@ -179,24 +217,61 @@ export function exportToSvg(snapshot: StudioSnapshot): string {
       const isCircle = card.shapeKind === 'circle';
       const textX = isCircle ? card.rect.left + card.rect.width / 2 : card.rect.left + padLeft;
       const anchorAttr = isCircle ? ` text-anchor="middle"` : '';
-      const startY = isCircle
-        ? card.rect.top + card.rect.height / 2 - ((lines.length - 1) * fontSize * 1.3) / 2
-        : card.rect.top + padTop + fontSize;
 
-      const tspans = lines
-        .map((line, i) => {
-          const weight = i === 0 ? ' font-weight="600"' : ' font-weight="400" opacity="0.82"';
-          const size = i === 0 ? fontSize : Math.max(13, Math.round(fontSize * 0.72));
-          const dy = i === 0 ? 0 : Math.round(size * 1.45);
-          return `<tspan x="${textX.toFixed(1)}" dy="${dy}" font-size="${size}"${weight}>${escapeXml(line)}</tspan>`;
-        })
-        .join('');
+      if (card.blockType === 'kpi') {
+        const kpi = parseKpiBlock(content);
+        const metricSize = Math.max(26, Math.min(58, Math.round(card.rect.width * 0.135)));
+        const kpiY = card.rect.top + padTop + metricSize;
+        const kpiTspans = [
+          `<tspan x="${textX.toFixed(1)}" dy="0" font-size="${metricSize}" font-weight="700">${escapeXml(kpi.value)}</tspan>`,
+          kpi.delta
+            ? `<tspan dx="12" font-size="${Math.max(12, Math.round(fontSize * 0.65))}" font-weight="600" opacity="0.85">${escapeXml(kpi.delta)}</tspan>`
+            : '',
+          kpi.label
+            ? `<tspan x="${textX.toFixed(1)}" dy="${Math.round(fontSize * 1.6)}" font-size="${Math.max(13, Math.round(fontSize * 0.78))}" font-weight="500" opacity="0.8">${escapeXml(kpi.label)}</tspan>`
+            : '',
+        ].join('');
+        cardParts.push(
+          `<g clip-path="url(#${clipId})">` +
+            `<text x="${textX.toFixed(1)}" y="${kpiY.toFixed(1)}"${anchorAttr} fill="${escapeXml(card.style.textColorHex)}" font-family="Inter, -apple-system, 'Segoe UI', sans-serif">${kpiTspans}</text>` +
+            `</g>`
+        );
+      } else if (card.blockType === 'checklist') {
+        const list = parseChecklistBlock(content);
+        const startY = card.rect.top + padTop + fontSize;
+        const itemSize = Math.max(12, Math.round(fontSize * 0.72));
+        const listTspans = [
+          `<tspan x="${textX.toFixed(1)}" dy="0" font-size="${fontSize}" font-weight="600">${escapeXml(list.title)}</tspan>`,
+          ...list.items.slice(0, Math.max(1, maxLines - 1)).map(
+            (item) =>
+              `<tspan x="${textX.toFixed(1)}" dy="${Math.round(itemSize * 1.55)}" font-size="${itemSize}" font-weight="400" opacity="0.86">✓  ${escapeXml(item)}</tspan>`
+          ),
+        ].join('');
+        cardParts.push(
+          `<g clip-path="url(#${clipId})">` +
+            `<text x="${textX.toFixed(1)}" y="${startY.toFixed(1)}"${anchorAttr} fill="${escapeXml(card.style.textColorHex)}" font-family="Inter, -apple-system, 'Segoe UI', sans-serif">${listTspans}</text>` +
+            `</g>`
+        );
+      } else {
+        const startY = isCircle
+          ? card.rect.top + card.rect.height / 2 - ((lines.length - 1) * fontSize * 1.3) / 2
+          : card.rect.top + padTop + fontSize;
 
-      cardParts.push(
-        `<g clip-path="url(#${clipId})">` +
-          `<text x="${textX.toFixed(1)}" y="${startY.toFixed(1)}"${anchorAttr} fill="${escapeXml(card.style.textColorHex)}" font-family="Inter, -apple-system, 'Segoe UI', sans-serif">${tspans}</text>` +
-          `</g>`
-      );
+        const tspans = lines
+          .map((line, i) => {
+            const weight = i === 0 ? ' font-weight="600"' : ' font-weight="400" opacity="0.82"';
+            const size = i === 0 ? fontSize : Math.max(13, Math.round(fontSize * 0.72));
+            const dy = i === 0 ? 0 : Math.round(size * 1.45);
+            return `<tspan x="${textX.toFixed(1)}" dy="${dy}" font-size="${size}"${weight}>${escapeXml(line)}</tspan>`;
+          })
+          .join('');
+
+        cardParts.push(
+          `<g clip-path="url(#${clipId})">` +
+            `<text x="${textX.toFixed(1)}" y="${startY.toFixed(1)}"${anchorAttr} fill="${escapeXml(card.style.textColorHex)}" font-family="Inter, -apple-system, 'Segoe UI', sans-serif">${tspans}</text>` +
+            `</g>`
+        );
+      }
     }
 
     layers.push(`<g id="${card.slotId}">${cardParts.join('')}</g>`);
@@ -224,7 +299,7 @@ export function exportToHtmlTailwind(snapshot: StudioSnapshot): string {
     const heightPct = ((card.rect.height / h) * 100).toFixed(3);
     const radiusPx = Math.round(card.cornerAdjustment * Math.min(card.rect.width, card.rect.height));
 
-    const bgStyle = card.style.fillHex ? `background-color: ${card.style.fillHex};` : '';
+    const bgStyle = buildCardCssBackground(card.style.fillHex, card.surfaceTreatment);
     const borderStyle =
       card.style.borderColorHex && card.style.borderWeightPt > 0
         ? `border: ${card.style.borderWeightPt}px ${card.style.borderDashed ? 'dashed' : 'solid'} ${hexToRgba(card.style.borderColorHex, card.style.borderTransparency)};`
@@ -243,11 +318,36 @@ export function exportToHtmlTailwind(snapshot: StudioSnapshot): string {
         ? ` animation: mosaika-enter ${activeAnimation.durationSec}s cubic-bezier(0.22, 1, 0.36, 1) ${(orderIdx * activeAnimation.staggerSec).toFixed(2)}s both;`
         : '';
 
-    const lines = (card.text.trim() || card.contentHint || card.shapeName).split(/\r?\n/);
-    const title = escapeXml(lines[0] ?? '');
-    const body = lines.slice(1).map(escapeXml).join('<br />');
-
-    const titleClass = card.role === 'hero' ? 'text-xl font-semibold' : 'text-sm font-semibold';
+    let innerHtml: string[];
+    if (card.blockType === 'kpi') {
+      const kpi = parseKpiBlock(card.text.trim() || card.contentHint || '');
+      innerHtml = [
+        `    <div class="flex items-center gap-2">`,
+        `      <span class="text-4xl font-bold tracking-tight tabular-nums">${escapeXml(kpi.value)}</span>`,
+        kpi.delta
+          ? `      <span class="text-xs font-semibold px-2 py-0.5 rounded-full border border-current opacity-85">${escapeXml(kpi.delta)}</span>`
+          : null,
+        `    </div>`,
+        kpi.label ? `    <p class="mt-2 text-xs font-medium opacity-80">${escapeXml(kpi.label)}</p>` : null,
+      ].filter((v): v is string => Boolean(v));
+    } else if (card.blockType === 'checklist') {
+      const list = parseChecklistBlock(card.text.trim() || card.contentHint || '');
+      innerHtml = [
+        `    <h3 class="text-sm font-semibold leading-tight">${escapeXml(list.title)}</h3>`,
+        `    <ul class="mt-2 space-y-1 text-xs opacity-85">`,
+        ...list.items.map((item) => `      <li>✓ ${escapeXml(item)}</li>`),
+        `    </ul>`,
+      ];
+    } else {
+      const lines = (card.text.trim() || card.contentHint || card.shapeName).split(/\r?\n/);
+      const title = escapeXml(lines[0] ?? '');
+      const body = lines.slice(1).map(escapeXml).join('<br />');
+      const titleClass = card.role === 'hero' ? 'text-xl font-semibold' : 'text-sm font-semibold';
+      innerHtml = [
+        `    <h3 class="${titleClass} leading-tight">${title}</h3>`,
+        body ? `    <p class="mt-1.5 text-xs opacity-80 leading-relaxed">${body}</p>` : null,
+      ].filter((v): v is string => Boolean(v));
+    }
 
     return [
       `  <!-- ${card.slotId} (${card.role}) -->`,
@@ -255,12 +355,9 @@ export function exportToHtmlTailwind(snapshot: StudioSnapshot): string {
       `    class="absolute overflow-hidden p-5 flex flex-col justify-start${shadowClass}"`,
       `    style="left: ${leftPct}%; top: ${topPct}%; width: ${widthPct}%; height: ${heightPct}%; ${bgStyle} ${borderStyle} ${radiusStyle} color: ${card.style.textColorHex};${motionStyle}"`,
       `  >`,
-      `    <h3 class="${titleClass} leading-tight">${title}</h3>`,
-      body ? `    <p class="mt-1.5 text-xs opacity-80 leading-relaxed">${body}</p>` : null,
+      ...innerHtml,
       `  </div>`,
-    ]
-      .filter(Boolean)
-      .join('\n');
+    ].join('\n');
   });
 
   const keyframesBlock =

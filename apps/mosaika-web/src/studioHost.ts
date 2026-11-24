@@ -23,6 +23,7 @@ import {
   resizeSplitRatio,
   round2,
 } from '@bento/core';
+import type { CardBlockType, CardSurfaceTreatment } from './cardBlocks.js';
 import { CANVAS_PRESETS, computeArtboardContentRect } from './presets.js';
 
 export interface StudioCard {
@@ -39,6 +40,8 @@ export interface StudioCard {
   contentHint?: string;
   tags: Record<string, string>;
   text: string;
+  blockType?: CardBlockType;
+  surfaceTreatment?: CardSurfaceTreatment;
   imageDataUrl?: string;
   hasScrim?: boolean;
   style: CellStyleSpec;
@@ -67,6 +70,8 @@ export interface ShareableStudioPayload {
   accent: string;
   state: BentoDocumentState;
   texts: Record<string, string>;
+  blocks?: Record<string, CardBlockType>;
+  surfaces?: Record<string, CardSurfaceTreatment>;
 }
 
 const STORAGE_KEY = 'mosaika_web_studio_v1';
@@ -144,18 +149,30 @@ export class WebStudioHost implements IBentoHost {
     });
     if (!created.ok) return;
 
-    this.applyDocumentDirectly(created.value, {
-      slot_01: 'Mosaika Studio\nDesign bounded Swiss bento grids for web, social & print.',
-      slot_02: '144 Blueprints\n12 intents + L-wraps & circles',
-      slot_03: 'Vector Export\nFigma-ready SVG & 2× PNG',
-      slot_04: 'Live Reflow\nSwitch 1440×900 to 1080×1080',
-      slot_05: 'Tailwind Code\n1-click responsive HTML',
-    });
+    this.applyDocumentDirectly(
+      created.value,
+      {
+        slot_01: 'Mosaika Studio\nDesign bounded Swiss bento grids for web, social & PowerPoint.',
+        slot_02: '144\n+12 Intents\nDeduplicated Blueprints',
+        slot_03: 'Export Anywhere\nEditable .pptx slides\nVector SVG & 2× PNG\nResponsive Tailwind',
+        slot_04: 'Live Reflow\nSwitch 1440×900 to 1080×1080',
+        slot_05: 'Motion Ready\nStaggered CSS & PPTX entrances',
+      },
+      {
+        slot_02: 'kpi',
+        slot_03: 'checklist',
+      },
+      {
+        slot_01: 'mesh',
+      }
+    );
   }
 
   private applyDocumentDirectly(
     doc: BentoDocumentState,
-    initialTexts?: Record<string, string>
+    initialTexts?: Record<string, string>,
+    initialBlocks?: Record<string, CardBlockType>,
+    initialSurfaces?: Record<string, CardSurfaceTreatment>
   ): void {
     this.activeDoc = doc;
     const specs = buildCellRenderSpecs(doc, { supportsCustomGeometry: true });
@@ -185,6 +202,8 @@ export class WebStudioHost implements IBentoHost {
         contentHint: spec.contentHint,
         tags: { ...spec.tags },
         text: initialTexts?.[spec.slotId] ?? prev?.text ?? '',
+        blockType: initialBlocks?.[spec.slotId] ?? prev?.blockType ?? 'text',
+        surfaceTreatment: initialSurfaces?.[spec.slotId] ?? prev?.surfaceTreatment ?? 'solid',
         imageDataUrl: prev?.imageDataUrl,
         hasScrim: prev?.hasScrim,
         style: styleBySlot.get(spec.slotId) ?? { ...DEFAULT_CARD_STYLE, slotId: spec.slotId },
@@ -226,16 +245,24 @@ export class WebStudioHost implements IBentoHost {
     this.canvasBgHex = payload.bg || '#FFFFFF';
     this.brandAccentHex = payload.accent || '#1B1D1E';
     this.presetId = this.detectPresetId(this.canvasWidth, this.canvasHeight);
-    this.applyDocumentDirectly(payload.state, payload.texts);
+    this.applyDocumentDirectly(payload.state, payload.texts, payload.blocks, payload.surfaces);
     this.emitChange(true);
   }
 
   public toSharePayload(): ShareableStudioPayload | null {
     if (!this.activeDoc) return null;
     const texts: Record<string, string> = {};
+    const blocks: Record<string, CardBlockType> = {};
+    const surfaces: Record<string, CardSurfaceTreatment> = {};
     for (const card of this.cards) {
       if (card.text.trim().length > 0) {
         texts[card.slotId] = card.text;
+      }
+      if (card.blockType && card.blockType !== 'text') {
+        blocks[card.slotId] = card.blockType;
+      }
+      if (card.surfaceTreatment && card.surfaceTreatment !== 'solid') {
+        surfaces[card.slotId] = card.surfaceTreatment;
       }
     }
     return {
@@ -246,6 +273,8 @@ export class WebStudioHost implements IBentoHost {
       accent: this.brandAccentHex,
       state: this.activeDoc,
       texts,
+      ...(Object.keys(blocks).length > 0 ? { blocks } : {}),
+      ...(Object.keys(surfaces).length > 0 ? { surfaces } : {}),
     };
   }
 
@@ -282,6 +311,8 @@ export class WebStudioHost implements IBentoHost {
         accent: typeof parsed.accent === 'string' ? parsed.accent : '#1B1D1E',
         state: validState,
         texts: parsed.texts ?? {},
+        blocks: parsed.blocks,
+        surfaces: parsed.surfaces,
       });
       return true;
     } catch {
@@ -399,6 +430,29 @@ export class WebStudioHost implements IBentoHost {
     const target = this.cards.find((c) => c.id === cardId);
     if (!target) return;
     target.text = text;
+    this.persistToLocalStorage();
+    this.emitChange(false);
+  }
+
+  public setCardBlockType(cardId: string, blockType: CardBlockType): void {
+    const target = this.cards.find((c) => c.id === cardId);
+    if (!target) return;
+    target.blockType = blockType;
+    if (blockType === 'kpi' && target.text.trim().split(/\r?\n/).length < 2) {
+      const label = target.text.trim() || 'Quarterly Growth';
+      target.text = `$4.2M\n+24% YoY\n${label}`;
+    } else if (blockType === 'checklist' && target.text.trim().split(/\r?\n/).length < 2) {
+      const title = target.text.trim() || 'Key Highlights';
+      target.text = `${title}\nEditable .pptx export\nVector SVG & Retina PNG\nZero-backend share link`;
+    }
+    this.persistToLocalStorage();
+    this.emitChange(false);
+  }
+
+  public setCardSurfaceTreatment(cardId: string, treatment: CardSurfaceTreatment): void {
+    const target = this.cards.find((c) => c.id === cardId);
+    if (!target) return;
+    target.surfaceTreatment = treatment;
     this.persistToLocalStorage();
     this.emitChange(false);
   }

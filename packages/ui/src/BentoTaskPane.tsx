@@ -940,7 +940,13 @@ export function BentoTaskPane({
     >
       <HeaderBar
         capabilities={capabilities}
-        activeCardCount={docState?.params.count}
+        activeCardCount={
+          docState
+            ? buildCellRenderSpecs(docState, {
+                supportsCustomGeometry: capabilities.supportsCustomGeometry,
+              }).length
+            : undefined
+        }
         canUndo={Boolean(docState) && undoHistory.past.length > 0}
         canRedo={Boolean(docState) && undoHistory.future.length > 0}
         isSyncing={isSyncing}

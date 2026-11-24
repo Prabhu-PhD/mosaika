@@ -1,5 +1,15 @@
 import { useMemo, useState } from 'react';
-import { Check, Code2, Copy, Download, FileCode, Image as ImageIcon, Link2, X } from 'lucide-react';
+import {
+  Check,
+  Code2,
+  Copy,
+  Download,
+  FileCode,
+  Image as ImageIcon,
+  Link2,
+  Presentation,
+  X,
+} from 'lucide-react';
 import {
   encodeSharePayload,
   exportToHtmlTailwind,
@@ -27,6 +37,8 @@ export function ExportModal({
   const [pngScale, setPngScale] = useState<1 | 2 | 3>(2);
   const [exportingPng, setExportingPng] = useState(false);
   const [pngError, setPngError] = useState<string | null>(null);
+  const [exportingPptx, setExportingPptx] = useState(false);
+  const [pptxError, setPptxError] = useState<string | null>(null);
   const [copiedCode, setCopiedCode] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
 
@@ -38,6 +50,20 @@ export function ExportModal({
   if (!open) return null;
 
   const baseFilename = `mosaika-${snapshot.canvasWidth}x${snapshot.canvasHeight}`;
+
+  const handleDownloadPptx = async () => {
+    setExportingPptx(true);
+    setPptxError(null);
+    try {
+      const { exportToPptxBlob } = await import('../pptxExporter.js');
+      const blob = await exportToPptxBlob(snapshot);
+      triggerFileDownload(blob, `${baseFilename}.pptx`);
+    } catch (err) {
+      setPptxError(err instanceof Error ? err.message : 'PPTX export failed.');
+    } finally {
+      setExportingPptx(false);
+    }
+  };
 
   const handleDownloadSvg = () => {
     const svg = exportToSvg(snapshot);
@@ -131,8 +157,36 @@ export function ExportModal({
 
         {/* Modal Body */}
         <div className="p-4 space-y-4 overflow-y-auto">
-          {/* Vector + Raster Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {/* PowerPoint + Vector SVG + Retina PNG Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            {/* Native PowerPoint (.pptx) Card */}
+            <div className="p-3 flex flex-col justify-between" style={{ border: `1px solid ${borderCol}` }}>
+              <div>
+                <div className="flex items-center gap-2 text-xs font-semibold">
+                  <Presentation className="w-3.5 h-3.5" />
+                  <span>PowerPoint .pptx</span>
+                </div>
+                <p className="text-[11px] mt-1 leading-relaxed" style={{ color: subText }}>
+                  Editable native shapes, KPI metrics, checklists & embedded photos.
+                </p>
+                {pptxError && <p className="text-[11px] text-red-500 mt-1">{pptxError}</p>}
+              </div>
+              <button
+                type="button"
+                data-testid="btn-download-pptx"
+                disabled={exportingPptx}
+                onClick={() => void handleDownloadPptx()}
+                className="mt-3 w-full py-2 px-3 text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer transition-opacity hover:opacity-90 disabled:opacity-50"
+                style={{
+                  backgroundColor: isDarkTheme ? '#F4F4F5' : '#111214',
+                  color: isDarkTheme ? '#111214' : '#FFFFFF',
+                }}
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>{exportingPptx ? 'Building .pptx...' : 'Download .pptx'}</span>
+              </button>
+            </div>
+
             {/* SVG Card */}
             <div className="p-3 flex flex-col justify-between" style={{ border: `1px solid ${mutedBorder}` }}>
               <div>
@@ -141,17 +195,18 @@ export function ExportModal({
                   <span>Vector SVG</span>
                 </div>
                 <p className="text-[11px] mt-1 leading-relaxed" style={{ color: subText }}>
-                  Pure vector primitives ready for Figma, Illustrator, Framer, or web embedding.
+                  Pure vector primitives ready for Figma, Illustrator, or Framer.
                 </p>
               </div>
               <button
                 type="button"
                 data-testid="btn-download-svg"
                 onClick={handleDownloadSvg}
-                className="mt-3 w-full py-2 px-3 text-xs font-medium flex items-center justify-center gap-1.5 cursor-pointer transition-opacity hover:opacity-90"
+                className="mt-3 w-full py-2 px-3 text-xs font-medium flex items-center justify-center gap-1.5 cursor-pointer"
                 style={{
-                  backgroundColor: isDarkTheme ? '#F4F4F5' : '#111214',
-                  color: isDarkTheme ? '#111214' : '#FFFFFF',
+                  border: `1px solid ${borderCol}`,
+                  backgroundColor: 'transparent',
+                  color: panelFg,
                 }}
               >
                 <Download className="w-3.5 h-3.5" />
@@ -178,7 +233,7 @@ export function ExportModal({
                           key={s}
                           type="button"
                           onClick={() => setPngScale(s)}
-                          className="px-2 py-0.5 cursor-pointer"
+                          className="px-1.5 py-0.5 cursor-pointer"
                           style={{
                             backgroundColor: active
                               ? isDarkTheme
@@ -199,7 +254,7 @@ export function ExportModal({
                   </div>
                 </div>
                 <p className="text-[11px] mt-1 leading-relaxed" style={{ color: subText }}>
-                  Crisp raster output at {snapshot.canvasWidth * pngScale} ×{' '}
+                  Crisp raster at {snapshot.canvasWidth * pngScale} ×{' '}
                   {snapshot.canvasHeight * pngScale} px.
                 </p>
                 {pngError && <p className="text-[11px] text-red-500 mt-1">{pngError}</p>}
@@ -217,7 +272,7 @@ export function ExportModal({
                 }}
               >
                 <Download className="w-3.5 h-3.5" />
-                <span>{exportingPng ? 'Rendering PNG...' : `Download @${pngScale}x .png`}</span>
+                <span>{exportingPng ? 'Rendering...' : `Download @${pngScale}x .png`}</span>
               </button>
             </div>
           </div>

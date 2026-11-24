@@ -6,6 +6,13 @@ import {
   type ResolvedSplitHandle,
 } from '@bento/core';
 import { ImagePlus, Lock, Trash2 } from 'lucide-react';
+import {
+  computeGradientStops,
+  parseChecklistBlock,
+  parseKpiBlock,
+  type CardBlockType,
+  type CardSurfaceTreatment,
+} from '../cardBlocks.js';
 import type { StudioCard, StudioSnapshot } from '../studioHost.js';
 
 export interface StudioCanvasProps {
@@ -14,6 +21,8 @@ export interface StudioCanvasProps {
   showGridOverlay: boolean;
   onSelectCards: (ids: string[]) => void;
   onUpdateCardText: (cardId: string, text: string) => void;
+  onSetCardBlockType: (cardId: string, blockType: CardBlockType) => void;
+  onSetCardSurfaceTreatment: (cardId: string, treatment: CardSurfaceTreatment) => void;
   onSetCardImage: (cardId: string, dataUrl: string) => void;
   onDeleteCard: (cardId: string) => void;
   onResizeSplit: (
@@ -110,6 +119,8 @@ export function StudioCanvas({
   showGridOverlay,
   onSelectCards,
   onUpdateCardText,
+  onSetCardBlockType,
+  onSetCardSurfaceTreatment,
   onSetCardImage,
   onDeleteCard,
   onResizeSplit,
@@ -280,6 +291,10 @@ export function StudioCanvas({
 
   const uiScaleInv = Math.max(0.75, Math.min(2.2, 1 / Math.max(0.3, fittedArtboard.scale)));
   const badgeFontPx = Math.round(11 * uiScaleInv);
+  const activeSelectedCard =
+    snapshot.selectedCardIds.length === 1
+      ? snapshot.cards.find((c) => c.id === snapshot.selectedCardIds[0]) ?? null
+      : null;
 
   return (
     <div
@@ -304,28 +319,123 @@ export function StudioCanvas({
         onChange={handleManualImageUpload}
       />
 
-      {/* Artboard Status Strip */}
+      {/* Artboard Status & Quick Card Block Strip */}
       <div
-        className="flex items-center justify-between mb-2 px-0.5 text-[11px] font-mono tracking-tight"
+        className="flex items-center justify-between gap-2 mb-2 px-0.5 text-[11px] font-mono tracking-tight"
         style={{
           width: fittedArtboard.width,
           color: isDarkTheme ? '#9CA3AF' : '#52525B',
         }}
       >
-        <div className="flex items-center gap-2">
-          <span className="font-semibold" style={{ color: isDarkTheme ? '#F4F4F5' : '#18181B' }}>
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="font-semibold shrink-0" style={{ color: isDarkTheme ? '#F4F4F5' : '#18181B' }}>
             {snapshot.canvasWidth} × {snapshot.canvasHeight} px
           </span>
           <span>·</span>
-          <span>
+          <span className="shrink-0">
             {snapshot.cards.length} {snapshot.cards.length === 1 ? 'card' : 'cards'}
           </span>
-          <span>·</span>
-          <span>{Math.round(fittedArtboard.scale * 100)}% zoom</span>
+          <span className="hidden sm:inline">·</span>
+          <span className="hidden sm:inline shrink-0">{Math.round(fittedArtboard.scale * 100)}%</span>
         </div>
-        <span className="hidden sm:inline opacity-75">
-          Double-click card to edit · Drop image on any tile · Drag gutters to resize
-        </span>
+
+        {activeSelectedCard ? (
+          <div
+            data-testid="selected-card-block-bar"
+            className="flex items-center gap-1.5 shrink-0"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div
+              className="inline-flex text-[10px]"
+              style={{
+                border: `1px solid ${isDarkTheme ? '#2E3035' : '#D4D4D8'}`,
+                backgroundColor: isDarkTheme ? '#111214' : '#FFFFFF',
+              }}
+            >
+              {(
+                [
+                  ['text', 'Text'],
+                  ['kpi', 'KPI'],
+                  ['checklist', 'List'],
+                ] as const
+              ).map(([bt, label]) => {
+                const active = (activeSelectedCard.blockType ?? 'text') === bt;
+                return (
+                  <button
+                    key={bt}
+                    type="button"
+                    data-testid={`card-block-${bt}`}
+                    onClick={() => onSetCardBlockType(activeSelectedCard.id, bt)}
+                    className="px-2 py-0.5 font-medium cursor-pointer"
+                    style={{
+                      backgroundColor: active
+                        ? isDarkTheme
+                          ? '#F4F4F5'
+                          : '#111214'
+                        : 'transparent',
+                      color: active
+                        ? isDarkTheme
+                          ? '#111214'
+                          : '#FFFFFF'
+                        : isDarkTheme
+                          ? '#A1A1AA'
+                          : '#52525B',
+                    }}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div
+              className="inline-flex text-[10px]"
+              style={{
+                border: `1px solid ${isDarkTheme ? '#2E3035' : '#D4D4D8'}`,
+                backgroundColor: isDarkTheme ? '#111214' : '#FFFFFF',
+              }}
+            >
+              {(
+                [
+                  ['solid', 'Flat'],
+                  ['sheen', 'Sheen'],
+                  ['mesh', 'Mesh'],
+                ] as const
+              ).map(([surf, label]) => {
+                const active = (activeSelectedCard.surfaceTreatment ?? 'solid') === surf;
+                return (
+                  <button
+                    key={surf}
+                    type="button"
+                    data-testid={`card-surface-${surf}`}
+                    onClick={() => onSetCardSurfaceTreatment(activeSelectedCard.id, surf)}
+                    className="px-2 py-0.5 font-medium cursor-pointer"
+                    style={{
+                      backgroundColor: active
+                        ? isDarkTheme
+                          ? '#F4F4F5'
+                          : '#111214'
+                        : 'transparent',
+                      color: active
+                        ? isDarkTheme
+                          ? '#111214'
+                          : '#FFFFFF'
+                        : isDarkTheme
+                          ? '#A1A1AA'
+                          : '#52525B',
+                    }}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ) : (
+          <span className="hidden sm:inline opacity-75">
+            Double-click card to edit · Drop image on any tile · Drag gutters to resize
+          </span>
+        )}
       </div>
 
       {/* Centered Artboard Frame */}
@@ -367,24 +477,43 @@ export function StudioCanvas({
 
             {snapshot.cards.map((card) => {
               const rx = card.cornerAdjustment * Math.min(card.rect.width, card.rect.height);
+              const stops =
+                card.style.fillHex && card.surfaceTreatment && card.surfaceTreatment !== 'solid'
+                  ? computeGradientStops(card.style.fillHex)
+                  : null;
               return (
-                <clipPath key={`clip-${card.id}`} id={`studio-clip-${card.id}`}>
-                  {card.svgPath ? (
-                    <path
-                      d={card.svgPath}
-                      transform={`translate(${card.rect.left} ${card.rect.top})`}
-                    />
-                  ) : (
-                    <rect
-                      x={card.rect.left}
-                      y={card.rect.top}
-                      width={card.rect.width}
-                      height={card.rect.height}
-                      rx={rx}
-                      ry={rx}
-                    />
+                <g key={`defs-${card.id}`}>
+                  <clipPath id={`studio-clip-${card.id}`}>
+                    {card.svgPath ? (
+                      <path
+                        d={card.svgPath}
+                        transform={`translate(${card.rect.left} ${card.rect.top})`}
+                      />
+                    ) : (
+                      <rect
+                        x={card.rect.left}
+                        y={card.rect.top}
+                        width={card.rect.width}
+                        height={card.rect.height}
+                        rx={rx}
+                        ry={rx}
+                      />
+                    )}
+                  </clipPath>
+                  {stops && (
+                    <linearGradient id={`studio-grad-${card.id}`} x1="0%" y1="0%" x2="100%" y2="100%">
+                      <stop offset="0%" stopColor={stops.startHex} />
+                      <stop offset="52%" stopColor={stops.midHex} />
+                      <stop offset="100%" stopColor={stops.endHex} />
+                    </linearGradient>
                   )}
-                </clipPath>
+                  {stops && card.surfaceTreatment === 'mesh' && (
+                    <radialGradient id={`studio-mesh-${card.id}`} cx="85%" cy="18%" r="62%">
+                      <stop offset="0%" stopColor={stops.glowHex} stopOpacity="0.42" />
+                      <stop offset="100%" stopColor={stops.glowHex} stopOpacity="0" />
+                    </radialGradient>
+                  )}
+                </g>
               );
             })}
           </defs>
@@ -408,7 +537,12 @@ export function StudioCanvas({
             const isEditing = editingCardId === card.id;
             const isDropTarget = dragOverCardId === card.id;
             const rx = card.cornerAdjustment * Math.min(card.rect.width, card.rect.height);
-            const fill = card.style.fillHex ?? 'none';
+            const hasGradientFill = Boolean(
+              card.style.fillHex && card.surfaceTreatment && card.surfaceTreatment !== 'solid'
+            );
+            const fill = hasGradientFill
+              ? `url(#studio-grad-${card.id})`
+              : (card.style.fillHex ?? 'none');
             const stroke =
               card.style.borderColorHex && card.style.borderWeightPt > 0
                 ? hexToRgba(card.style.borderColorHex, card.style.borderTransparency)
@@ -488,6 +622,19 @@ export function StudioCanvas({
                   />
                 )}
 
+                {/* Optional Mesh Radial Glow Layer */}
+                {hasGradientFill && card.surfaceTreatment === 'mesh' && (
+                  <g clipPath={`url(#studio-clip-${card.id})`} pointerEvents="none">
+                    <rect
+                      x={card.rect.left}
+                      y={card.rect.top}
+                      width={card.rect.width}
+                      height={card.rect.height}
+                      fill={`url(#studio-mesh-${card.id})`}
+                    />
+                  </g>
+                )}
+
                 {/* Clipped Photo & Scrim */}
                 {card.imageDataUrl && (
                   <g clipPath={`url(#studio-clip-${card.id})`} pointerEvents="none">
@@ -547,6 +694,100 @@ export function StudioCanvas({
                             fontWeight: 600,
                           }}
                         />
+                      ) : card.blockType === 'kpi' && card.text.trim().length > 0 ? (
+                        (() => {
+                          const kpi = parseKpiBlock(card.text);
+                          const metricPx = Math.max(26, Math.min(60, Math.round(card.rect.width * 0.135)));
+                          return (
+                            <div className="flex flex-col justify-between h-full">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span
+                                  style={{
+                                    fontSize: `${metricPx}px`,
+                                    lineHeight: 1.05,
+                                    fontWeight: 700,
+                                    letterSpacing: '-0.03em',
+                                    fontVariantNumeric: 'tabular-nums',
+                                  }}
+                                >
+                                  {kpi.value}
+                                </span>
+                                {kpi.delta && (
+                                  <span
+                                    style={{
+                                      fontSize: `${Math.max(11, Math.round(headlineSize * 0.62))}px`,
+                                      fontWeight: 600,
+                                      padding: '3px 8px',
+                                      borderRadius: '9999px',
+                                      border: '1px solid currentColor',
+                                      opacity: 0.85,
+                                    }}
+                                  >
+                                    {kpi.delta}
+                                  </span>
+                                )}
+                              </div>
+                              {kpi.label && (
+                                <div
+                                  style={{
+                                    marginTop: '8px',
+                                    fontSize: `${Math.max(13, Math.round(headlineSize * 0.72))}px`,
+                                    fontWeight: 500,
+                                    opacity: 0.78,
+                                  }}
+                                >
+                                  {kpi.label}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()
+                      ) : card.blockType === 'checklist' && card.text.trim().length > 0 ? (
+                        (() => {
+                          const list = parseChecklistBlock(card.text);
+                          const itemPx = Math.max(12, Math.round(headlineSize * 0.66));
+                          return (
+                            <div className="flex flex-col">
+                              <div
+                                style={{
+                                  fontSize: `${headlineSize}px`,
+                                  lineHeight: 1.2,
+                                  fontWeight: 600,
+                                  letterSpacing: '-0.015em',
+                                }}
+                              >
+                                {list.title}
+                              </div>
+                              <ul
+                                style={{
+                                  marginTop: `${Math.max(8, Math.round(headlineSize * 0.4))}px`,
+                                  display: 'flex',
+                                  flexDirection: 'column',
+                                  gap: '5px',
+                                  listStyle: 'none',
+                                  padding: 0,
+                                }}
+                              >
+                                {list.items.map((item, idx) => (
+                                  <li
+                                    key={idx}
+                                    style={{
+                                      fontSize: `${itemPx}px`,
+                                      lineHeight: 1.35,
+                                      opacity: 0.86,
+                                      display: 'flex',
+                                      alignItems: 'baseline',
+                                      gap: '7px',
+                                    }}
+                                  >
+                                    <span style={{ fontWeight: 700 }}>✓</span>
+                                    <span>{item}</span>
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          );
+                        })()
                       ) : card.text.trim().length > 0 ? (
                         <>
                           <div
