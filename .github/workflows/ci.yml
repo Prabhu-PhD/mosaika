@@ -40,7 +40,7 @@ jobs:
 
       - name: Verify @bento/core Rule 1 purity (no React/DOM/Office/Date.now/Math.random)
         run: |
-          if grep -En "from ['\"](react|react-dom)|window\.|document\.|Office\.|Math\.random\(|Date\.now\(" packages/core/src/*.ts | grep -v "^\s*\*"; then
+          if grep -En "from ['\"](react|react-dom)|window\.|document\.|Office\.|Math\.random\(|Date\.now\(" packages/core/src/*.ts | grep -vE ":[0-9]+:[[:space:]]*(\*|//)"; then
             echo "Rule 1 violation detected in packages/core/src/"
             exit 1
           fi

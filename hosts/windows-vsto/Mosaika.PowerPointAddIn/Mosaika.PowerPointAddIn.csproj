@@ -11,7 +11,6 @@
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
     <Deterministic>true</Deterministic>
     <OfficePiaDir Condition="'$(OfficePiaDir)' == ''">C:\Program Files (x86)\Microsoft Visual Studio\Shared\Visual Studio Tools for Office\PIA\Office15</OfficePiaDir>
-    <ExtensibilityDllPath Condition="'$(ExtensibilityDllPath)' == ''">C:\Program Files (x86)\Common Files\Microsoft Shared\MSEnv\PublicAssemblies\extensibility.dll</ExtensibilityDllPath>
   </PropertyGroup>
 
   <ItemGroup>
@@ -26,10 +25,6 @@
     </Reference>
     <Reference Include="Office">
       <HintPath>$(OfficePiaDir)\Office.dll</HintPath>
-      <EmbedInteropTypes>True</EmbedInteropTypes>
-    </Reference>
-    <Reference Include="Extensibility">
-      <HintPath>$(ExtensibilityDllPath)</HintPath>
       <EmbedInteropTypes>True</EmbedInteropTypes>
     </Reference>
     <Reference Include="Microsoft.CSharp" />
