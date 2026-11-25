@@ -5,6 +5,11 @@ import {
   parseKpiBlock,
 } from './cardBlocks.js';
 import type { ShareableStudioPayload, StudioCard, StudioSnapshot } from './studioHost.js';
+import {
+  buildSquirclePath,
+  computeBackdropPalette,
+  getFontPairing,
+} from './visualCraft.js';
 
 function escapeXml(value: string): string {
   return value
@@ -106,11 +111,14 @@ function wrapTextLines(text: string, maxCharsPerLine: number, maxLines: number):
  * zero <foreignObject> so it opens cleanly in every design app and renders crisp Retina PNGs.
  */
 export function exportToSvg(snapshot: StudioSnapshot): string {
-  const { canvasWidth: w, canvasHeight: h, canvasBgHex, cards } = snapshot;
+  const { canvasWidth: w, canvasHeight: h, canvasBgHex, cards, backdrop, grainEnabled } = snapshot;
+  const isDarkBg = canvasBgHex.toLowerCase() === '#0d0f0f' || canvasBgHex.toLowerCase() === '#090a0d';
+  const palette = computeBackdropPalette(snapshot.brandAccentHex, isDarkBg);
+  const fontSpec = getFontPairing(snapshot.fontPairing);
 
   const defs: string[] = [
     `<filter id="mosaika-shadow" x="-10%" y="-10%" width="120%" height="124%">` +
-      `<feDropShadow dx="0" dy="6" stdDeviation="9" flood-color="#0F172A" flood-opacity="0.10"/>` +
+      `<feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#0F172A" flood-opacity="0.09"/>` +
       `</filter>`,
     `<linearGradient id="mosaika-scrim" x1="0" y1="0" x2="0" y2="1">` +
       `<stop offset="0%" stop-color="#000000" stop-opacity="0.08"/>` +
@@ -119,25 +127,76 @@ export function exportToSvg(snapshot: StudioSnapshot): string {
       `</linearGradient>`,
   ];
 
-  const layers: string[] = [
-    `<rect x="0" y="0" width="${w}" height="${h}" fill="${escapeXml(canvasBgHex)}"/>`,
-  ];
+  const layers: string[] = [];
+
+  if (backdrop === 'aurora') {
+    defs.push(
+      `<radialGradient id="bg-aurora-a" cx="18%" cy="18%" r="58%"><stop offset="0%" stop-color="${palette.blobA}" stop-opacity="0.48"/><stop offset="100%" stop-color="${palette.blobA}" stop-opacity="0"/></radialGradient>`,
+      `<radialGradient id="bg-aurora-b" cx="84%" cy="24%" r="54%"><stop offset="0%" stop-color="${palette.blobB}" stop-opacity="0.44"/><stop offset="100%" stop-color="${palette.blobB}" stop-opacity="0"/></radialGradient>`,
+      `<radialGradient id="bg-aurora-c" cx="55%" cy="88%" r="58%"><stop offset="0%" stop-color="${palette.blobC}" stop-opacity="0.42"/><stop offset="100%" stop-color="${palette.blobC}" stop-opacity="0"/></radialGradient>`
+    );
+    layers.push(
+      `<rect x="0" y="0" width="${w}" height="${h}" fill="${palette.baseBg}"/>`,
+      `<rect x="0" y="0" width="${w}" height="${h}" fill="url(#bg-aurora-a)"/>`,
+      `<rect x="0" y="0" width="${w}" height="${h}" fill="url(#bg-aurora-b)"/>`,
+      `<rect x="0" y="0" width="${w}" height="${h}" fill="url(#bg-aurora-c)"/>`
+    );
+  } else if (backdrop === 'dusk') {
+    defs.push(
+      `<linearGradient id="bg-dusk" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="${isDarkBg ? '#0B0F1A' : '#FDFBF7'}"/><stop offset="52%" stop-color="${isDarkBg ? '#131826' : '#F3F4F8'}"/><stop offset="100%" stop-color="${isDarkBg ? '#1C1628' : '#EBF0F9'}"/></linearGradient>`
+    );
+    layers.push(`<rect x="0" y="0" width="${w}" height="${h}" fill="url(#bg-dusk)"/>`);
+  } else if (backdrop === 'dots') {
+    defs.push(
+      `<pattern id="bg-dots" width="24" height="24" patternUnits="userSpaceOnUse"><circle cx="12" cy="12" r="1.4" fill="${palette.dotColor}"/></pattern>`
+    );
+    layers.push(
+      `<rect x="0" y="0" width="${w}" height="${h}" fill="${escapeXml(canvasBgHex)}"/>`,
+      `<rect x="0" y="0" width="${w}" height="${h}" fill="url(#bg-dots)"/>`
+    );
+  } else if (backdrop === 'photo' && snapshot.backdropImageUrl) {
+    layers.push(
+      `<rect x="0" y="0" width="${w}" height="${h}" fill="#111216"/>`,
+      `<image href="${escapeXml(snapshot.backdropImageUrl)}" x="0" y="0" width="${w}" height="${h}" preserveAspectRatio="xMidYMid slice"/>`
+    );
+  } else {
+    layers.push(`<rect x="0" y="0" width="${w}" height="${h}" fill="${escapeXml(canvasBgHex)}"/>`);
+  }
 
   for (const card of cards) {
     const clipId = `clip-${card.slotId}`;
     const rx = +(card.cornerAdjustment * Math.min(card.rect.width, card.rect.height)).toFixed(2);
+    const useSquircle =
+      snapshot.cornerStyle === 'squircle' &&
+      !card.svgPath &&
+      card.shapeKind !== 'circle' &&
+      card.shapeKind !== 'pill';
+    const contourPath =
+      card.svgPath ??
+      (useSquircle ? buildSquirclePath(card.rect.width, card.rect.height, rx) : null);
+
+    const isGlass = card.surfaceTreatment === 'glass' && !card.imageDataUrl;
     const hasGrad = Boolean(
-      card.style.fillHex && card.surfaceTreatment && card.surfaceTreatment !== 'solid'
+      card.style.fillHex &&
+        (card.surfaceTreatment === 'sheen' || card.surfaceTreatment === 'mesh')
     );
-    const fill = hasGrad
-      ? `url(#grad-${card.slotId})`
-      : card.style.fillHex
-        ? escapeXml(card.style.fillHex)
-        : 'none';
-    const stroke =
-      card.style.borderColorHex && card.style.borderWeightPt > 0
+    const fill = isGlass
+      ? isDarkBg
+        ? 'rgba(20, 22, 29, 0.54)'
+        : 'rgba(255, 255, 255, 0.68)'
+      : hasGrad
+        ? `url(#grad-${card.slotId})`
+        : card.style.fillHex
+          ? escapeXml(card.style.fillHex)
+          : 'none';
+    const stroke = isGlass
+      ? isDarkBg
+        ? 'rgba(255, 255, 255, 0.18)'
+        : 'rgba(255, 255, 255, 0.90)'
+      : card.style.borderColorHex && card.style.borderWeightPt > 0
         ? hexToRgba(card.style.borderColorHex, card.style.borderTransparency)
         : 'none';
+    const strokeW = isGlass ? 1.25 : card.style.borderWeightPt;
     const dashAttr = card.style.borderDashed ? ` stroke-dasharray="6 4"` : '';
     const filterAttr = card.style.shadow ? ` filter="url(#mosaika-shadow)"` : '';
 
@@ -160,9 +219,9 @@ export function exportToSvg(snapshot: StudioSnapshot): string {
       }
     }
 
-    if (card.svgPath) {
+    if (contourPath) {
       defs.push(
-        `<clipPath id="${clipId}"><path d="${escapeXml(card.svgPath)}" transform="translate(${card.rect.left} ${card.rect.top})"/></clipPath>`
+        `<clipPath id="${clipId}"><path d="${escapeXml(contourPath)}" transform="translate(${card.rect.left} ${card.rect.top})"/></clipPath>`
       );
     } else {
       defs.push(
@@ -171,13 +230,13 @@ export function exportToSvg(snapshot: StudioSnapshot): string {
     }
 
     const cardParts: string[] = [];
-    if (card.svgPath) {
+    if (contourPath) {
       cardParts.push(
-        `<path d="${escapeXml(card.svgPath)}" transform="translate(${card.rect.left} ${card.rect.top})" fill="${fill}" stroke="${stroke}" stroke-width="${card.style.borderWeightPt}"${dashAttr}${filterAttr}/>`
+        `<path d="${escapeXml(contourPath)}" transform="translate(${card.rect.left} ${card.rect.top})" fill="${fill}" stroke="${stroke}" stroke-width="${strokeW}"${dashAttr}${filterAttr}/>`
       );
     } else {
       cardParts.push(
-        `<rect x="${card.rect.left}" y="${card.rect.top}" width="${card.rect.width}" height="${card.rect.height}" rx="${rx}" ry="${rx}" fill="${fill}" stroke="${stroke}" stroke-width="${card.style.borderWeightPt}"${dashAttr}${filterAttr}/>`
+        `<rect x="${card.rect.left}" y="${card.rect.top}" width="${card.rect.width}" height="${card.rect.height}" rx="${rx}" ry="${rx}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeW}"${dashAttr}${filterAttr}/>`
       );
     }
 
@@ -268,13 +327,22 @@ export function exportToSvg(snapshot: StudioSnapshot): string {
 
         cardParts.push(
           `<g clip-path="url(#${clipId})">` +
-            `<text x="${textX.toFixed(1)}" y="${startY.toFixed(1)}"${anchorAttr} fill="${escapeXml(card.style.textColorHex)}" font-family="Inter, -apple-system, 'Segoe UI', sans-serif">${tspans}</text>` +
+            `<text x="${textX.toFixed(1)}" y="${startY.toFixed(1)}"${anchorAttr} fill="${escapeXml(card.style.textColorHex)}" font-family="${escapeXml(fontSpec.headingFamily)}">${tspans}</text>` +
             `</g>`
         );
       }
     }
 
     layers.push(`<g id="${card.slotId}">${cardParts.join('')}</g>`);
+  }
+
+  if (grainEnabled) {
+    defs.push(
+      `<filter id="mosaika-grain"><feTurbulence type="fractalNoise" baseFrequency="0.78" numOctaves="3" stitchTiles="stitch"/><feColorMatrix type="saturate" values="0"/></filter>`
+    );
+    layers.push(
+      `<rect x="0" y="0" width="${w}" height="${h}" filter="url(#mosaika-grain)" opacity="${isDarkBg ? '0.06' : '0.045'}"/>`
+    );
   }
 
   return [
@@ -289,8 +357,20 @@ export function exportToSvg(snapshot: StudioSnapshot): string {
  * Generates clean, responsive HTML + Tailwind CSS markup ready to paste into any web project.
  */
 export function exportToHtmlTailwind(snapshot: StudioSnapshot): string {
-  const { canvasWidth: w, canvasHeight: h, canvasBgHex, cards, activeAnimation } = snapshot;
+  const { canvasWidth: w, canvasHeight: h, canvasBgHex, cards, activeAnimation, backdrop } = snapshot;
+  const isDarkBg = canvasBgHex.toLowerCase() === '#0d0f0f' || canvasBgHex.toLowerCase() === '#090a0d';
+  const palette = computeBackdropPalette(snapshot.brandAccentHex, isDarkBg);
+  const fontSpec = getFontPairing(snapshot.fontPairing);
   const hasMotion = Boolean(activeAnimation && activeAnimation.preset !== 'none');
+
+  const sectionBgCss =
+    backdrop === 'aurora'
+      ? `background: radial-gradient(circle at 18% 18%, ${palette.blobA}77 0%, transparent 55%), radial-gradient(circle at 84% 24%, ${palette.blobB}70 0%, transparent 52%), radial-gradient(circle at 55% 88%, ${palette.blobC}66 0%, transparent 55%), ${palette.baseBg};`
+      : backdrop === 'dusk'
+        ? `background: linear-gradient(135deg, ${isDarkBg ? '#0B0F1A, #131826, #1C1628' : '#FDFBF7, #F3F4F8, #EBF0F9'});`
+        : backdrop === 'dots'
+          ? `background-color: ${canvasBgHex}; background-image: radial-gradient(${palette.dotColor} 1.4px, transparent 1.4px); background-size: 24px 24px;`
+          : `background-color: ${canvasBgHex};`;
 
   const cardBlocks = cards.map((card: StudioCard) => {
     const leftPct = ((card.rect.left / w) * 100).toFixed(3);
@@ -299,11 +379,13 @@ export function exportToHtmlTailwind(snapshot: StudioSnapshot): string {
     const heightPct = ((card.rect.height / h) * 100).toFixed(3);
     const radiusPx = Math.round(card.cornerAdjustment * Math.min(card.rect.width, card.rect.height));
 
-    const bgStyle = buildCardCssBackground(card.style.fillHex, card.surfaceTreatment);
+    const bgStyle = buildCardCssBackground(card.style.fillHex, card.surfaceTreatment, isDarkBg);
     const borderStyle =
-      card.style.borderColorHex && card.style.borderWeightPt > 0
-        ? `border: ${card.style.borderWeightPt}px ${card.style.borderDashed ? 'dashed' : 'solid'} ${hexToRgba(card.style.borderColorHex, card.style.borderTransparency)};`
-        : '';
+      card.surfaceTreatment === 'glass'
+        ? `border: 1px solid ${isDarkBg ? 'rgba(255,255,255,0.16)' : 'rgba(255,255,255,0.88)'};`
+        : card.style.borderColorHex && card.style.borderWeightPt > 0
+          ? `border: ${card.style.borderWeightPt}px ${card.style.borderDashed ? 'dashed' : 'solid'} ${hexToRgba(card.style.borderColorHex, card.style.borderTransparency)};`
+          : '';
     const shadowClass = card.style.shadow ? ' shadow-lg' : '';
     const radiusStyle =
       card.shapeKind === 'circle'
@@ -312,16 +394,31 @@ export function exportToHtmlTailwind(snapshot: StudioSnapshot): string {
           ? 'border-radius: 9999px;'
           : `border-radius: ${radiusPx}px;`;
 
+    const align = card.shapeKind === 'circle' ? 'center' : (card.textAlign ?? 'tl');
+    const alignClass =
+      align === 'center'
+        ? 'items-center justify-center text-center'
+        : align === 'bl'
+          ? 'justify-end'
+          : align === 'split'
+            ? 'justify-between'
+            : 'justify-start';
+
     const orderIdx = activeAnimation ? activeAnimation.orderedSlotIds.indexOf(card.slotId) : -1;
     const motionStyle =
       hasMotion && activeAnimation && orderIdx >= 0
         ? ` animation: mosaika-enter ${activeAnimation.durationSec}s cubic-bezier(0.22, 1, 0.36, 1) ${(orderIdx * activeAnimation.staggerSec).toFixed(2)}s both;`
         : '';
 
+    const kickerLine = card.kicker?.trim()
+      ? `    <span class="text-[10px] font-semibold uppercase tracking-widest opacity-70 mb-1.5">${escapeXml(card.kicker.trim())}</span>`
+      : null;
+
     let innerHtml: string[];
     if (card.blockType === 'kpi') {
       const kpi = parseKpiBlock(card.text.trim() || card.contentHint || '');
       innerHtml = [
+        kickerLine,
         `    <div class="flex items-center gap-2">`,
         `      <span class="text-4xl font-bold tracking-tight tabular-nums">${escapeXml(kpi.value)}</span>`,
         kpi.delta
@@ -333,18 +430,20 @@ export function exportToHtmlTailwind(snapshot: StudioSnapshot): string {
     } else if (card.blockType === 'checklist') {
       const list = parseChecklistBlock(card.text.trim() || card.contentHint || '');
       innerHtml = [
+        kickerLine,
         `    <h3 class="text-sm font-semibold leading-tight">${escapeXml(list.title)}</h3>`,
         `    <ul class="mt-2 space-y-1 text-xs opacity-85">`,
         ...list.items.map((item) => `      <li>✓ ${escapeXml(item)}</li>`),
         `    </ul>`,
-      ];
+      ].filter((v): v is string => Boolean(v));
     } else {
       const lines = (card.text.trim() || card.contentHint || card.shapeName).split(/\r?\n/);
       const title = escapeXml(lines[0] ?? '');
       const body = lines.slice(1).map(escapeXml).join('<br />');
       const titleClass = card.role === 'hero' ? 'text-xl font-semibold' : 'text-sm font-semibold';
       innerHtml = [
-        `    <h3 class="${titleClass} leading-tight">${title}</h3>`,
+        kickerLine,
+        `    <h3 class="${titleClass} leading-tight" style="font-family: ${escapeXml(fontSpec.headingFamily)};">${title}</h3>`,
         body ? `    <p class="mt-1.5 text-xs opacity-80 leading-relaxed">${body}</p>` : null,
       ].filter((v): v is string => Boolean(v));
     }
@@ -352,8 +451,8 @@ export function exportToHtmlTailwind(snapshot: StudioSnapshot): string {
     return [
       `  <!-- ${card.slotId} (${card.role}) -->`,
       `  <div`,
-      `    class="absolute overflow-hidden p-5 flex flex-col justify-start${shadowClass}"`,
-      `    style="left: ${leftPct}%; top: ${topPct}%; width: ${widthPct}%; height: ${heightPct}%; ${bgStyle} ${borderStyle} ${radiusStyle} color: ${card.style.textColorHex};${motionStyle}"`,
+      `    class="absolute overflow-hidden p-5 flex flex-col ${alignClass}${shadowClass}"`,
+      `    style="left: ${leftPct}%; top: ${topPct}%; width: ${widthPct}%; height: ${heightPct}%; ${bgStyle} ${borderStyle} ${radiusStyle} color: ${card.style.textColorHex}; font-family: ${escapeXml(fontSpec.bodyFamily)};${motionStyle}"`,
       `  >`,
       ...innerHtml,
       `  </div>`,
@@ -382,7 +481,7 @@ export function exportToHtmlTailwind(snapshot: StudioSnapshot): string {
     ...keyframesBlock,
     `<section`,
     `  class="relative w-full mx-auto overflow-hidden"`,
-    `  style="max-width: ${w}px; aspect-ratio: ${w} / ${h}; background-color: ${canvasBgHex};"`,
+    `  style="max-width: ${w}px; aspect-ratio: ${w} / ${h}; ${sectionBgCss}"`,
     `>`,
     ...cardBlocks,
     `</section>`,

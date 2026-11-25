@@ -5,15 +5,19 @@ import {
   resolveSplitHandles,
   type ResolvedSplitHandle,
 } from '@bento/core';
-import { ImagePlus, Lock, Trash2 } from 'lucide-react';
+import { GripVertical, Lock } from 'lucide-react';
 import {
   computeGradientStops,
   parseChecklistBlock,
   parseKpiBlock,
-  type CardBlockType,
-  type CardSurfaceTreatment,
 } from '../cardBlocks.js';
 import type { StudioCard, StudioSnapshot } from '../studioHost.js';
+import {
+  buildSquirclePath,
+  computeBackdropPalette,
+  getFontPairing,
+} from '../visualCraft.js';
+import { CardIcon } from './CardIcon.js';
 
 export interface StudioCanvasProps {
   snapshot: StudioSnapshot;
@@ -21,9 +25,8 @@ export interface StudioCanvasProps {
   showGridOverlay: boolean;
   onSelectCards: (ids: string[]) => void;
   onUpdateCardText: (cardId: string, text: string) => void;
-  onSetCardBlockType: (cardId: string, blockType: CardBlockType) => void;
-  onSetCardSurfaceTreatment: (cardId: string, treatment: CardSurfaceTreatment) => void;
   onSetCardImage: (cardId: string, dataUrl: string) => void;
+  onSwapCardContents: (sourceId: string, targetId: string) => void;
   onDeleteCard: (cardId: string) => void;
   onResizeSplit: (
     nodeId: string,
@@ -31,6 +34,7 @@ export interface StudioCanvasProps {
     snapHarmonic: boolean,
     commit: boolean
   ) => void;
+  children?: React.ReactNode;
 }
 
 function hexToRgba(hex: string, transparency: number): string {
@@ -119,18 +123,18 @@ export function StudioCanvas({
   showGridOverlay,
   onSelectCards,
   onUpdateCardText,
-  onSetCardBlockType,
-  onSetCardSurfaceTreatment,
   onSetCardImage,
+  onSwapCardContents,
   onDeleteCard,
   onResizeSplit,
+  children,
 }: StudioCanvasProps) {
   const stageRef = useRef<HTMLDivElement | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const [uploadTargetCardId, setUploadTargetCardId] = useState<string | null>(null);
-  const [stageBox, setStageBox] = useState<{ w: number; h: number }>({ w: 960, h: 640 });
+  const [stageBox, setStageBox] = useState<{ w: number; h: number }>({ w: 1020, h: 700 });
   const [editingCardId, setEditingCardId] = useState<string | null>(null);
+  const [hoveredCardId, setHoveredCardId] = useState<string | null>(null);
+  const [dragSwapSourceId, setDragSwapSourceId] = useState<string | null>(null);
   const [dragOverCardId, setDragOverCardId] = useState<string | null>(null);
   const [hoveredGutterId, setHoveredGutterId] = useState<string | null>(null);
   const [draggingGutter, setDraggingGutter] = useState<{
@@ -141,7 +145,6 @@ export function StudioCanvas({
     lastRatio: number;
   } | null>(null);
 
-  // Measure workbench viewport so any aspect ratio (1440×900, 1080×1080, 794×1123, 1200×360) fits cleanly
   useEffect(() => {
     const el = stageRef.current;
     if (!el) return;
@@ -157,7 +160,7 @@ export function StudioCanvas({
     return () => ro.disconnect();
   }, []);
 
-  // Keyboard Delete/Backspace removes selected card when not typing
+  // Delete / Escape keyboard ergonomics
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const tag = document.activeElement?.tagName.toLowerCase();
@@ -169,15 +172,16 @@ export function StudioCanvas({
         }
       } else if (e.key === 'Escape') {
         setEditingCardId(null);
+        onSelectCards([]);
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [onDeleteCard, snapshot.selectedCardIds]);
+  }, [onDeleteCard, onSelectCards, snapshot.selectedCardIds]);
 
   const fittedArtboard = useMemo(() => {
-    const availW = Math.max(240, stageBox.w - 48);
-    const availH = Math.max(200, stageBox.h - 68);
+    const availW = Math.max(240, stageBox.w - 64);
+    const availH = Math.max(200, stageBox.h - 110);
     const scale = Math.min(availW / snapshot.canvasWidth, availH / snapshot.canvasHeight, 1.15);
     return {
       width: Math.round(snapshot.canvasWidth * scale),
@@ -194,6 +198,14 @@ export function StudioCanvas({
     return { doc, handles, lattice };
   }, [snapshot.activeDoc, snapshot.cards.length]);
 
+  const backdropPalette = useMemo(
+    () => computeBackdropPalette(snapshot.brandAccentHex, isDarkTheme),
+    [snapshot.brandAccentHex, isDarkTheme]
+  );
+
+  const fontSpec = useMemo(() => getFontPairing(snapshot.fontPairing), [snapshot.fontPairing]);
+  const selectedSet = useMemo(() => new Set(snapshot.selectedCardIds), [snapshot.selectedCardIds]);
+
   const clientToCanvasPt = (clientX: number, clientY: number): { x: number; y: number } | null => {
     const svg = svgRef.current;
     if (!svg) return null;
@@ -207,19 +219,9 @@ export function StudioCanvas({
     };
   };
 
-  const selectedSet = useMemo(() => new Set(snapshot.selectedCardIds), [snapshot.selectedCardIds]);
-
   const handleCardClick = (e: React.MouseEvent, card: StudioCard) => {
     e.stopPropagation();
-    if (e.shiftKey) {
-      if (selectedSet.has(card.id)) {
-        onSelectCards(snapshot.selectedCardIds.filter((id) => id !== card.id));
-      } else {
-        onSelectCards([...snapshot.selectedCardIds, card.id]);
-      }
-    } else {
-      onSelectCards([card.id]);
-    }
+    onSelectCards([card.id]);
   };
 
   const handleGutterDown = (
@@ -266,188 +268,75 @@ export function StudioCanvas({
     onResizeSplit(nodeId, lastRatio, !e.altKey, true);
   };
 
-  const handleCardDrop = async (e: React.DragEvent, cardId: string) => {
+  const handleCardDrop = async (e: React.DragEvent, targetCardId: string) => {
     e.preventDefault();
     e.stopPropagation();
     setDragOverCardId(null);
+
+    const swappedSource = e.dataTransfer.getData('application/x-mosaika-card') || dragSwapSourceId;
+    setDragSwapSourceId(null);
+    if (swappedSource && swappedSource !== targetCardId) {
+      onSwapCardContents(swappedSource, targetCardId);
+      return;
+    }
+
     const file = e.dataTransfer.files?.[0];
     if (!file) return;
     const dataUrl = await readImageFileAsDataUrl(file);
     if (dataUrl) {
-      onSetCardImage(cardId, dataUrl);
-    }
-  };
-
-  const handleManualImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    const targetId = uploadTargetCardId;
-    e.target.value = '';
-    if (!file || !targetId) return;
-    const dataUrl = await readImageFileAsDataUrl(file);
-    if (dataUrl) {
-      onSetCardImage(targetId, dataUrl);
+      onSetCardImage(targetCardId, dataUrl);
     }
   };
 
   const uiScaleInv = Math.max(0.75, Math.min(2.2, 1 / Math.max(0.3, fittedArtboard.scale)));
   const badgeFontPx = Math.round(11 * uiScaleInv);
-  const activeSelectedCard =
-    snapshot.selectedCardIds.length === 1
-      ? snapshot.cards.find((c) => c.id === snapshot.selectedCardIds[0]) ?? null
-      : null;
 
   return (
     <div
       ref={stageRef}
-      className="relative flex-1 min-w-0 h-full flex flex-col items-center justify-center overflow-hidden select-none"
+      className="relative flex-1 min-w-0 h-full flex flex-col items-center justify-center overflow-hidden select-none pb-12"
       style={{
-        backgroundColor: isDarkTheme ? '#0A0B0C' : '#F3F4F6',
-        backgroundImage: isDarkTheme
-          ? 'radial-gradient(rgba(255,255,255,0.08) 1px, transparent 1px)'
-          : 'radial-gradient(rgba(15,23,42,0.10) 1px, transparent 1px)',
-        backgroundSize: '20px 20px',
+        backgroundColor: isDarkTheme ? '#090A0D' : '#EEF0F4',
       }}
       onClick={() => {
         setEditingCardId(null);
+        onSelectCards([]);
       }}
     >
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept="image/*"
-        className="hidden"
-        onChange={handleManualImageUpload}
-      />
-
-      {/* Artboard Status & Quick Card Block Strip */}
+      {/* Subtle Dimension Whisper above Artboard */}
       <div
-        className="flex items-center justify-between gap-2 mb-2 px-0.5 text-[11px] font-mono tracking-tight"
+        className="flex items-center justify-between mb-2.5 px-1 text-[11px] font-mono tracking-tight"
         style={{
           width: fittedArtboard.width,
-          color: isDarkTheme ? '#9CA3AF' : '#52525B',
+          color: isDarkTheme ? '#71717A' : '#64748B',
         }}
       >
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="font-semibold shrink-0" style={{ color: isDarkTheme ? '#F4F4F5' : '#18181B' }}>
-            {snapshot.canvasWidth} × {snapshot.canvasHeight} px
+        <div className="flex items-center gap-2">
+          <span className="font-medium" style={{ color: isDarkTheme ? '#D4D4D8' : '#334155' }}>
+            {snapshot.canvasWidth} × {snapshot.canvasHeight}
           </span>
           <span>·</span>
-          <span className="shrink-0">
+          <span>
             {snapshot.cards.length} {snapshot.cards.length === 1 ? 'card' : 'cards'}
           </span>
-          <span className="hidden sm:inline">·</span>
-          <span className="hidden sm:inline shrink-0">{Math.round(fittedArtboard.scale * 100)}%</span>
+          <span>·</span>
+          <span>{Math.round(fittedArtboard.scale * 100)}%</span>
         </div>
-
-        {activeSelectedCard ? (
-          <div
-            data-testid="selected-card-block-bar"
-            className="flex items-center gap-1.5 shrink-0"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div
-              className="inline-flex text-[10px]"
-              style={{
-                border: `1px solid ${isDarkTheme ? '#2E3035' : '#D4D4D8'}`,
-                backgroundColor: isDarkTheme ? '#111214' : '#FFFFFF',
-              }}
-            >
-              {(
-                [
-                  ['text', 'Text'],
-                  ['kpi', 'KPI'],
-                  ['checklist', 'List'],
-                ] as const
-              ).map(([bt, label]) => {
-                const active = (activeSelectedCard.blockType ?? 'text') === bt;
-                return (
-                  <button
-                    key={bt}
-                    type="button"
-                    data-testid={`card-block-${bt}`}
-                    onClick={() => onSetCardBlockType(activeSelectedCard.id, bt)}
-                    className="px-2 py-0.5 font-medium cursor-pointer"
-                    style={{
-                      backgroundColor: active
-                        ? isDarkTheme
-                          ? '#F4F4F5'
-                          : '#111214'
-                        : 'transparent',
-                      color: active
-                        ? isDarkTheme
-                          ? '#111214'
-                          : '#FFFFFF'
-                        : isDarkTheme
-                          ? '#A1A1AA'
-                          : '#52525B',
-                    }}
-                  >
-                    {label}
-                  </button>
-                );
-              })}
-            </div>
-
-            <div
-              className="inline-flex text-[10px]"
-              style={{
-                border: `1px solid ${isDarkTheme ? '#2E3035' : '#D4D4D8'}`,
-                backgroundColor: isDarkTheme ? '#111214' : '#FFFFFF',
-              }}
-            >
-              {(
-                [
-                  ['solid', 'Flat'],
-                  ['sheen', 'Sheen'],
-                  ['mesh', 'Mesh'],
-                ] as const
-              ).map(([surf, label]) => {
-                const active = (activeSelectedCard.surfaceTreatment ?? 'solid') === surf;
-                return (
-                  <button
-                    key={surf}
-                    type="button"
-                    data-testid={`card-surface-${surf}`}
-                    onClick={() => onSetCardSurfaceTreatment(activeSelectedCard.id, surf)}
-                    className="px-2 py-0.5 font-medium cursor-pointer"
-                    style={{
-                      backgroundColor: active
-                        ? isDarkTheme
-                          ? '#F4F4F5'
-                          : '#111214'
-                        : 'transparent',
-                      color: active
-                        ? isDarkTheme
-                          ? '#111214'
-                          : '#FFFFFF'
-                        : isDarkTheme
-                          ? '#A1A1AA'
-                          : '#52525B',
-                    }}
-                  >
-                    {label}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        ) : (
-          <span className="hidden sm:inline opacity-75">
-            Double-click card to edit · Drop image on any tile · Drag gutters to resize
-          </span>
-        )}
+        <span className="hidden md:inline opacity-80">
+          Double-click to edit · Drag handle to swap tiles · Ctrl+V to paste image
+        </span>
       </div>
 
       {/* Centered Artboard Frame */}
       <div
         data-testid="studio-artboard-frame"
-        className="relative transition-[width,height] duration-150"
+        className="relative rounded-xl overflow-hidden transition-[width,height] duration-150"
         style={{
           width: fittedArtboard.width,
           height: fittedArtboard.height,
           boxShadow: isDarkTheme
-            ? '0 22px 54px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.12)'
-            : '0 20px 48px rgba(15, 23, 42, 0.12), 0 0 0 1px rgba(15, 23, 42, 0.10)',
+            ? '0 28px 70px rgba(0, 0, 0, 0.72), 0 0 0 1px rgba(255, 255, 255, 0.10)'
+            : '0 24px 64px rgba(15, 23, 42, 0.12), 0 0 0 1px rgba(15, 23, 42, 0.07)',
         }}
       >
         <svg
@@ -457,16 +346,15 @@ export function StudioCanvas({
           width={fittedArtboard.width}
           height={fittedArtboard.height}
           className="block w-full h-full"
-          style={{ backgroundColor: snapshot.canvasBgHex }}
         >
           <defs>
             <filter id="studio-card-shadow" x="-10%" y="-10%" width="120%" height="124%">
               <feDropShadow
                 dx="0"
-                dy="6"
-                stdDeviation="9"
+                dy="10"
+                stdDeviation="14"
                 floodColor="#0F172A"
-                floodOpacity={isDarkTheme ? '0.38' : '0.10'}
+                floodOpacity={isDarkTheme ? '0.42' : '0.09'}
               />
             </filter>
             <linearGradient id="studio-card-scrim" x1="0" y1="0" x2="0" y2="1">
@@ -475,18 +363,61 @@ export function StudioCanvas({
               <stop offset="100%" stopColor="#000000" stopOpacity="0.72" />
             </linearGradient>
 
+            {/* Backdrop Aurora / Dusk Gradients */}
+            <radialGradient id="studio-aurora-a" cx="18%" cy="18%" r="58%">
+              <stop offset="0%" stopColor={backdropPalette.blobA} stopOpacity={isDarkTheme ? '0.52' : '0.48'} />
+              <stop offset="100%" stopColor={backdropPalette.blobA} stopOpacity="0" />
+            </radialGradient>
+            <radialGradient id="studio-aurora-b" cx="84%" cy="24%" r="54%">
+              <stop offset="0%" stopColor={backdropPalette.blobB} stopOpacity={isDarkTheme ? '0.42' : '0.45'} />
+              <stop offset="100%" stopColor={backdropPalette.blobB} stopOpacity="0" />
+            </radialGradient>
+            <radialGradient id="studio-aurora-c" cx="55%" cy="88%" r="58%">
+              <stop offset="0%" stopColor={backdropPalette.blobC} stopOpacity={isDarkTheme ? '0.46' : '0.42'} />
+              <stop offset="100%" stopColor={backdropPalette.blobC} stopOpacity="0" />
+            </radialGradient>
+            <linearGradient id="studio-dusk-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stopColor={isDarkTheme ? '#0B0F1A' : '#FDFBF7'} />
+              <stop offset="52%" stopColor={isDarkTheme ? '#131826' : '#F3F4F8'} />
+              <stop offset="100%" stopColor={isDarkTheme ? '#1C1628' : '#EBF0F9'} />
+            </linearGradient>
+            <pattern id="studio-dots-pat" width="24" height="24" patternUnits="userSpaceOnUse">
+              <circle cx="12" cy="12" r="1.4" fill={backdropPalette.dotColor} />
+            </pattern>
+            <filter id="studio-film-grain" x="0%" y="0%" width="100%" height="100%">
+              <feTurbulence
+                type="fractalNoise"
+                baseFrequency="0.78"
+                numOctaves="3"
+                stitchTiles="stitch"
+              />
+              <feColorMatrix type="saturate" values="0" />
+            </filter>
+
+            {/* Per-card Clip Paths & Gradients */}
             {snapshot.cards.map((card) => {
               const rx = card.cornerAdjustment * Math.min(card.rect.width, card.rect.height);
+              const useSquircle =
+                snapshot.cornerStyle === 'squircle' &&
+                !card.svgPath &&
+                card.shapeKind !== 'circle' &&
+                card.shapeKind !== 'pill';
+              const contourPath =
+                card.svgPath ??
+                (useSquircle ? buildSquirclePath(card.rect.width, card.rect.height, rx) : null);
+
               const stops =
-                card.style.fillHex && card.surfaceTreatment && card.surfaceTreatment !== 'solid'
+                card.style.fillHex &&
+                (card.surfaceTreatment === 'sheen' || card.surfaceTreatment === 'mesh')
                   ? computeGradientStops(card.style.fillHex)
                   : null;
+
               return (
                 <g key={`defs-${card.id}`}>
                   <clipPath id={`studio-clip-${card.id}`}>
-                    {card.svgPath ? (
+                    {contourPath ? (
                       <path
-                        d={card.svgPath}
+                        d={contourPath}
                         transform={`translate(${card.rect.left} ${card.rect.top})`}
                       />
                     ) : (
@@ -509,7 +440,7 @@ export function StudioCanvas({
                   )}
                   {stops && card.surfaceTreatment === 'mesh' && (
                     <radialGradient id={`studio-mesh-${card.id}`} cx="85%" cy="18%" r="62%">
-                      <stop offset="0%" stopColor={stops.glowHex} stopOpacity="0.42" />
+                      <stop offset="0%" stopColor={stops.glowHex} stopOpacity="0.44" />
                       <stop offset="100%" stopColor={stops.glowHex} stopOpacity="0" />
                     </radialGradient>
                   )}
@@ -518,35 +449,89 @@ export function StudioCanvas({
             })}
           </defs>
 
-          {/* Artboard Background */}
-          <rect
-            x={0}
-            y={0}
-            width={snapshot.canvasWidth}
-            height={snapshot.canvasHeight}
-            fill={snapshot.canvasBgHex}
+          {/* Artboard Backdrop Layer */}
+          <g
             onClick={() => {
               setEditingCardId(null);
               onSelectCards([]);
             }}
-          />
+          >
+            {snapshot.backdrop === 'aurora' ? (
+              <>
+                <rect x={0} y={0} width={snapshot.canvasWidth} height={snapshot.canvasHeight} fill={backdropPalette.baseBg} />
+                <rect x={0} y={0} width={snapshot.canvasWidth} height={snapshot.canvasHeight} fill="url(#studio-aurora-a)" />
+                <rect x={0} y={0} width={snapshot.canvasWidth} height={snapshot.canvasHeight} fill="url(#studio-aurora-b)" />
+                <rect x={0} y={0} width={snapshot.canvasWidth} height={snapshot.canvasHeight} fill="url(#studio-aurora-c)" />
+              </>
+            ) : snapshot.backdrop === 'dusk' ? (
+              <rect x={0} y={0} width={snapshot.canvasWidth} height={snapshot.canvasHeight} fill="url(#studio-dusk-grad)" />
+            ) : snapshot.backdrop === 'dots' ? (
+              <>
+                <rect x={0} y={0} width={snapshot.canvasWidth} height={snapshot.canvasHeight} fill={snapshot.canvasBgHex} />
+                <rect x={0} y={0} width={snapshot.canvasWidth} height={snapshot.canvasHeight} fill="url(#studio-dots-pat)" />
+              </>
+            ) : snapshot.backdrop === 'photo' && snapshot.backdropImageUrl ? (
+              <>
+                <rect x={0} y={0} width={snapshot.canvasWidth} height={snapshot.canvasHeight} fill="#111216" />
+                <image
+                  href={snapshot.backdropImageUrl}
+                  x={0}
+                  y={0}
+                  width={snapshot.canvasWidth}
+                  height={snapshot.canvasHeight}
+                  preserveAspectRatio="xMidYMid slice"
+                />
+              </>
+            ) : (
+              <rect
+                x={0}
+                y={0}
+                width={snapshot.canvasWidth}
+                height={snapshot.canvasHeight}
+                fill={snapshot.canvasBgHex}
+              />
+            )}
+          </g>
 
           {/* Cards */}
           {snapshot.cards.map((card) => {
             const isSelected = selectedSet.has(card.id);
+            const isHovered = hoveredCardId === card.id;
             const isEditing = editingCardId === card.id;
             const isDropTarget = dragOverCardId === card.id;
+            const isGlass = card.surfaceTreatment === 'glass' && !card.imageDataUrl;
             const rx = card.cornerAdjustment * Math.min(card.rect.width, card.rect.height);
+
+            const useSquircle =
+              snapshot.cornerStyle === 'squircle' &&
+              !card.svgPath &&
+              card.shapeKind !== 'circle' &&
+              card.shapeKind !== 'pill';
+            const contourPath =
+              card.svgPath ??
+              (useSquircle ? buildSquirclePath(card.rect.width, card.rect.height, rx) : null);
+
             const hasGradientFill = Boolean(
-              card.style.fillHex && card.surfaceTreatment && card.surfaceTreatment !== 'solid'
+              card.style.fillHex &&
+                (card.surfaceTreatment === 'sheen' || card.surfaceTreatment === 'mesh')
             );
-            const fill = hasGradientFill
-              ? `url(#studio-grad-${card.id})`
-              : (card.style.fillHex ?? 'none');
-            const stroke =
-              card.style.borderColorHex && card.style.borderWeightPt > 0
+            const fill = isGlass
+              ? isDarkTheme
+                ? 'rgba(20, 22, 29, 0.42)'
+                : 'rgba(255, 255, 255, 0.56)'
+              : hasGradientFill
+                ? `url(#studio-grad-${card.id})`
+                : (card.style.fillHex ?? 'none');
+
+            const stroke = isGlass
+              ? isDarkTheme
+                ? 'rgba(255, 255, 255, 0.16)'
+                : 'rgba(255, 255, 255, 0.88)'
+              : card.style.borderColorHex && card.style.borderWeightPt > 0
                 ? hexToRgba(card.style.borderColorHex, card.style.borderTransparency)
                 : 'none';
+
+            const strokeW = isGlass ? 1.25 : card.style.borderWeightPt;
 
             const anim = snapshot.activeAnimation;
             const animIndex = anim ? anim.orderedSlotIds.indexOf(card.slotId) : -1;
@@ -561,15 +546,25 @@ export function StudioCanvas({
 
             const headlineSize =
               card.role === 'hero'
-                ? Math.max(18, Math.min(34, Math.round(card.rect.width * 0.048)))
-                : Math.max(14, Math.min(22, Math.round(card.rect.width * 0.045)));
-            const basePadX = Math.max(16, Math.round(card.rect.width * 0.055));
-            const basePadY = Math.max(18, Math.round(card.rect.height * 0.07));
+                ? Math.max(22, Math.min(42, Math.round(card.rect.width * 0.052)))
+                : Math.max(15, Math.min(24, Math.round(card.rect.width * 0.048)));
+            const basePadX = Math.max(20, Math.round(card.rect.width * 0.058));
+            const basePadY = Math.max(20, Math.round(card.rect.height * 0.072));
             const safePad = computeNotchSafePadding(card, snapshot.cards, basePadX, basePadY);
             const isCircle = card.shapeKind === 'circle';
+            const align = isCircle ? 'center' : (card.textAlign ?? 'tl');
             const lines = card.text.split(/\r?\n/);
             const firstLine = lines[0] ?? '';
             const restLines = lines.slice(1).join('\n');
+
+            const alignClasses =
+              align === 'center'
+                ? 'items-center justify-center text-center'
+                : align === 'bl'
+                  ? 'items-start justify-end text-left'
+                  : align === 'split'
+                    ? 'items-start justify-between text-left'
+                    : 'items-start justify-start text-left';
 
             return (
               <g
@@ -577,6 +572,8 @@ export function StudioCanvas({
                 data-testid={`studio-card-${card.slotId}`}
                 className="cursor-pointer"
                 style={animStyle}
+                onMouseEnter={() => setHoveredCardId(card.id)}
+                onMouseLeave={() => setHoveredCardId((prev) => (prev === card.id ? null : prev))}
                 onClick={(e) => handleCardClick(e, card)}
                 onDoubleClick={(e) => {
                   e.stopPropagation();
@@ -595,14 +592,34 @@ export function StudioCanvas({
                   void handleCardDrop(e, card.id);
                 }}
               >
-                {/* Base Vector Shape */}
-                {card.svgPath ? (
+                {/* Live GPU Backdrop Blur for Glassmorphism cards */}
+                {isGlass && (
+                  <g clipPath={`url(#studio-clip-${card.id})`} pointerEvents="none">
+                    <foreignObject
+                      x={card.rect.left}
+                      y={card.rect.top}
+                      width={card.rect.width}
+                      height={card.rect.height}
+                    >
+                      <div
+                        className="w-full h-full"
+                        style={{
+                          backdropFilter: 'blur(24px) saturate(150%)',
+                          WebkitBackdropFilter: 'blur(24px) saturate(150%)',
+                        }}
+                      />
+                    </foreignObject>
+                  </g>
+                )}
+
+                {/* Base Vector Contour (Squircle / Cutout Path / Rounded Rect) */}
+                {contourPath ? (
                   <path
-                    d={card.svgPath}
+                    d={contourPath}
                     transform={`translate(${card.rect.left} ${card.rect.top})`}
                     fill={fill}
                     stroke={stroke}
-                    strokeWidth={card.style.borderWeightPt}
+                    strokeWidth={strokeW}
                     strokeDasharray={card.style.borderDashed ? '6 4' : undefined}
                     filter={card.style.shadow ? 'url(#studio-card-shadow)' : undefined}
                   />
@@ -616,13 +633,13 @@ export function StudioCanvas({
                     ry={rx}
                     fill={fill}
                     stroke={stroke}
-                    strokeWidth={card.style.borderWeightPt}
+                    strokeWidth={strokeW}
                     strokeDasharray={card.style.borderDashed ? '6 4' : undefined}
                     filter={card.style.shadow ? 'url(#studio-card-shadow)' : undefined}
                   />
                 )}
 
-                {/* Optional Mesh Radial Glow Layer */}
+                {/* Optional Mesh Radial Glow */}
                 {hasGradientFill && card.surfaceTreatment === 'mesh' && (
                   <g clipPath={`url(#studio-clip-${card.id})`} pointerEvents="none">
                     <rect
@@ -658,7 +675,7 @@ export function StudioCanvas({
                   </g>
                 )}
 
-                {/* Card Typography or Live Editor */}
+                {/* Card Typography, Kicker, Icon & Live Inline Editor */}
                 <g clipPath={`url(#studio-clip-${card.id})`}>
                   <foreignObject
                     x={card.rect.left}
@@ -667,13 +684,11 @@ export function StudioCanvas({
                     height={card.rect.height}
                   >
                     <div
-                      className={`w-full h-full flex flex-col ${
-                        isCircle ? 'items-center justify-center text-center' : 'justify-start text-left'
-                      }`}
+                      className={`w-full h-full flex flex-col ${alignClasses}`}
                       style={{
                         padding: `${safePad.padTop}px ${safePad.padRight}px ${safePad.padBottom}px ${safePad.padLeft}px`,
                         color: card.style.textColorHex,
-                        fontFamily: "Inter, -apple-system, 'Segoe UI', sans-serif",
+                        fontFamily: fontSpec.bodyFamily,
                       }}
                     >
                       {isEditing ? (
@@ -683,171 +698,218 @@ export function StudioCanvas({
                           onChange={(e) => onUpdateCardText(card.id, e.target.value)}
                           onBlur={() => setEditingCardId(null)}
                           onClick={(e) => e.stopPropagation()}
-                          placeholder="Type title on line 1, body on line 2..."
+                          placeholder="Line 1: Title — Line 2+: Body copy..."
                           className={`w-full h-full resize-none bg-transparent outline-none ${
-                            isCircle ? 'text-center' : 'text-left'
+                            align === 'center' ? 'text-center' : 'text-left'
                           }`}
                           style={{
                             color: card.style.textColorHex,
+                            fontFamily: fontSpec.headingFamily,
                             fontSize: `${headlineSize}px`,
-                            lineHeight: 1.3,
-                            fontWeight: 600,
+                            lineHeight: 1.25,
+                            fontWeight: fontSpec.headingWeight,
                           }}
                         />
-                      ) : card.blockType === 'kpi' && card.text.trim().length > 0 ? (
-                        (() => {
-                          const kpi = parseKpiBlock(card.text);
-                          const metricPx = Math.max(26, Math.min(60, Math.round(card.rect.width * 0.135)));
-                          return (
-                            <div className="flex flex-col justify-between h-full">
-                              <div className="flex items-center gap-2 flex-wrap">
+                      ) : (
+                        <>
+                          {/* Optional Eyebrow Kicker + Icon Badge */}
+                          {(card.kicker?.trim() || (card.icon && card.icon !== 'none')) && (
+                            <div
+                              className={`flex items-center gap-2 mb-2.5 ${
+                                align === 'center' ? 'justify-center' : 'justify-start'
+                              }`}
+                              style={{ opacity: 0.78 }}
+                            >
+                              {card.icon && card.icon !== 'none' && (
                                 <span
+                                  className="inline-flex items-center justify-center rounded-lg"
                                   style={{
-                                    fontSize: `${metricPx}px`,
-                                    lineHeight: 1.05,
-                                    fontWeight: 700,
-                                    letterSpacing: '-0.03em',
-                                    fontVariantNumeric: 'tabular-nums',
+                                    padding: '5px',
+                                    backgroundColor: 'rgba(128,128,128,0.14)',
                                   }}
                                 >
-                                  {kpi.value}
+                                  <CardIcon icon={card.icon} size={Math.max(14, Math.round(headlineSize * 0.65))} />
                                 </span>
-                                {kpi.delta && (
-                                  <span
+                              )}
+                              {card.kicker?.trim() && (
+                                <span
+                                  className="uppercase tracking-[0.12em] font-semibold"
+                                  style={{
+                                    fontSize: `${Math.max(10, Math.round(headlineSize * 0.36))}px`,
+                                  }}
+                                >
+                                  {card.kicker.trim()}
+                                </span>
+                              )}
+                            </div>
+                          )}
+
+                          {card.blockType === 'kpi' && card.text.trim().length > 0 ? (
+                            (() => {
+                              const kpi = parseKpiBlock(card.text);
+                              const metricPx = Math.max(
+                                30,
+                                Math.min(64, Math.round(card.rect.width * 0.14))
+                              );
+                              return (
+                                <div className="flex flex-col justify-between flex-1 w-full">
+                                  <div
+                                    className={`flex items-center gap-2.5 flex-wrap ${
+                                      align === 'center' ? 'justify-center' : 'justify-start'
+                                    }`}
+                                  >
+                                    <span
+                                      style={{
+                                        fontFamily: fontSpec.headingFamily,
+                                        fontSize: `${metricPx}px`,
+                                        lineHeight: 1.02,
+                                        fontWeight: 700,
+                                        letterSpacing: '-0.035em',
+                                        fontVariantNumeric: 'tabular-nums',
+                                      }}
+                                    >
+                                      {kpi.value}
+                                    </span>
+                                    {kpi.delta && (
+                                      <span
+                                        style={{
+                                          fontSize: `${Math.max(11, Math.round(headlineSize * 0.58))}px`,
+                                          fontWeight: 600,
+                                          padding: '3px 9px',
+                                          borderRadius: '9999px',
+                                          border: '1px solid currentColor',
+                                          opacity: 0.85,
+                                        }}
+                                      >
+                                        {kpi.delta}
+                                      </span>
+                                    )}
+                                  </div>
+                                  {kpi.label && (
+                                    <div
+                                      style={{
+                                        marginTop: '10px',
+                                        fontSize: `${Math.max(13, Math.round(headlineSize * 0.72))}px`,
+                                        fontWeight: 500,
+                                        opacity: 0.78,
+                                      }}
+                                    >
+                                      {kpi.label}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })()
+                          ) : card.blockType === 'checklist' && card.text.trim().length > 0 ? (
+                            (() => {
+                              const list = parseChecklistBlock(card.text);
+                              const itemPx = Math.max(12, Math.round(headlineSize * 0.64));
+                              return (
+                                <div className="flex flex-col w-full">
+                                  <div
                                     style={{
-                                      fontSize: `${Math.max(11, Math.round(headlineSize * 0.62))}px`,
-                                      fontWeight: 600,
-                                      padding: '3px 8px',
-                                      borderRadius: '9999px',
-                                      border: '1px solid currentColor',
-                                      opacity: 0.85,
+                                      fontFamily: fontSpec.headingFamily,
+                                      fontSize: `${headlineSize}px`,
+                                      lineHeight: 1.18,
+                                      fontWeight: fontSpec.headingWeight,
+                                      letterSpacing: fontSpec.letterSpacing,
                                     }}
                                   >
-                                    {kpi.delta}
-                                  </span>
-                                )}
+                                    {list.title}
+                                  </div>
+                                  <ul
+                                    style={{
+                                      marginTop: `${Math.max(8, Math.round(headlineSize * 0.42))}px`,
+                                      display: 'flex',
+                                      flexDirection: 'column',
+                                      gap: '6px',
+                                      listStyle: 'none',
+                                      padding: 0,
+                                    }}
+                                  >
+                                    {list.items.map((item, idx) => (
+                                      <li
+                                        key={idx}
+                                        style={{
+                                          fontSize: `${itemPx}px`,
+                                          lineHeight: 1.35,
+                                          opacity: 0.84,
+                                          display: 'flex',
+                                          alignItems: 'baseline',
+                                          gap: '8px',
+                                        }}
+                                      >
+                                        <span style={{ fontWeight: 700 }}>✓</span>
+                                        <span>{item}</span>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              );
+                            })()
+                          ) : card.text.trim().length > 0 ? (
+                            <div className="w-full">
+                              <div
+                                style={{
+                                  fontFamily: fontSpec.headingFamily,
+                                  fontSize: `${headlineSize}px`,
+                                  lineHeight: 1.15,
+                                  fontWeight: fontSpec.headingWeight,
+                                  letterSpacing: fontSpec.letterSpacing,
+                                }}
+                              >
+                                {firstLine}
                               </div>
-                              {kpi.label && (
+                              {restLines && (
                                 <div
                                   style={{
-                                    marginTop: '8px',
-                                    fontSize: `${Math.max(13, Math.round(headlineSize * 0.72))}px`,
-                                    fontWeight: 500,
-                                    opacity: 0.78,
+                                    marginTop: `${Math.max(8, Math.round(headlineSize * 0.34))}px`,
+                                    fontSize: `${Math.max(13, Math.round(headlineSize * 0.56))}px`,
+                                    lineHeight: 1.5,
+                                    opacity: 0.8,
+                                    whiteSpace: 'pre-wrap',
                                   }}
                                 >
-                                  {kpi.label}
+                                  {restLines}
                                 </div>
                               )}
                             </div>
-                          );
-                        })()
-                      ) : card.blockType === 'checklist' && card.text.trim().length > 0 ? (
-                        (() => {
-                          const list = parseChecklistBlock(card.text);
-                          const itemPx = Math.max(12, Math.round(headlineSize * 0.66));
-                          return (
-                            <div className="flex flex-col">
-                              <div
-                                style={{
-                                  fontSize: `${headlineSize}px`,
-                                  lineHeight: 1.2,
-                                  fontWeight: 600,
-                                  letterSpacing: '-0.015em',
-                                }}
-                              >
-                                {list.title}
-                              </div>
-                              <ul
-                                style={{
-                                  marginTop: `${Math.max(8, Math.round(headlineSize * 0.4))}px`,
-                                  display: 'flex',
-                                  flexDirection: 'column',
-                                  gap: '5px',
-                                  listStyle: 'none',
-                                  padding: 0,
-                                }}
-                              >
-                                {list.items.map((item, idx) => (
-                                  <li
-                                    key={idx}
-                                    style={{
-                                      fontSize: `${itemPx}px`,
-                                      lineHeight: 1.35,
-                                      opacity: 0.86,
-                                      display: 'flex',
-                                      alignItems: 'baseline',
-                                      gap: '7px',
-                                    }}
-                                  >
-                                    <span style={{ fontWeight: 700 }}>✓</span>
-                                    <span>{item}</span>
-                                  </li>
-                                ))}
-                              </ul>
-                            </div>
-                          );
-                        })()
-                      ) : card.text.trim().length > 0 ? (
-                        <>
-                          <div
-                            style={{
-                              fontSize: `${headlineSize}px`,
-                              lineHeight: 1.2,
-                              fontWeight: 600,
-                              letterSpacing: '-0.015em',
-                            }}
-                          >
-                            {firstLine}
-                          </div>
-                          {restLines && (
+                          ) : (
                             <div
+                              className="uppercase tracking-wider font-mono"
                               style={{
-                                marginTop: `${Math.max(6, Math.round(headlineSize * 0.35))}px`,
-                                fontSize: `${Math.max(13, Math.round(headlineSize * 0.66))}px`,
-                                lineHeight: 1.45,
-                                opacity: 0.82,
-                                whiteSpace: 'pre-wrap',
+                                fontSize: `${Math.max(10, Math.round(headlineSize * 0.45))}px`,
+                                opacity: 0.38,
                               }}
                             >
-                              {restLines}
+                              {card.contentHint ?? card.shapeName}
                             </div>
                           )}
                         </>
-                      ) : (
-                        <div
-                          className="uppercase tracking-wider font-mono"
-                          style={{
-                            fontSize: `${Math.max(10, Math.round(headlineSize * 0.5))}px`,
-                            opacity: 0.42,
-                          }}
-                        >
-                          {card.contentHint ?? card.shapeName}
-                        </div>
                       )}
                     </div>
                   </foreignObject>
                 </g>
 
-                {/* Lock Indicator */}
+                {/* Subtle Lock Indicator */}
                 {card.locked && (
                   <g
-                    transform={`translate(${card.rect.left + card.rect.width - 28}, ${card.rect.top + 10})`}
+                    transform={`translate(${card.rect.left + card.rect.width - 30}, ${card.rect.top + 12})`}
                     pointerEvents="none"
                   >
-                    <rect width={20} height={20} rx={4} fill="rgba(15,23,42,0.75)" />
+                    <rect width={20} height={20} rx={6} fill="rgba(15,23,42,0.72)" />
                     <foreignObject x={3} y={3} width={14} height={14}>
-                      <Lock className="w-3.5 h-3.5 text-amber-400" />
+                      <Lock className="w-3.5 h-3.5 text-amber-300" />
                     </foreignObject>
                   </g>
                 )}
 
-                {/* Selection or Image-Drop Highlight Ring */}
+                {/* Selection or Drop-to-Swap Highlight Ring */}
                 {(isSelected || isDropTarget) && (
                   <>
-                    {card.svgPath ? (
+                    {contourPath ? (
                       <path
-                        d={card.svgPath}
+                        d={contourPath}
                         transform={`translate(${card.rect.left} ${card.rect.top})`}
                         fill={isDropTarget ? 'rgba(37, 99, 235, 0.14)' : 'none'}
                         stroke={isDropTarget ? '#2563EB' : '#0EA5E9'}
@@ -873,51 +935,57 @@ export function StudioCanvas({
                   </>
                 )}
 
-                {/* Quick Card Action Pill on Single Selection */}
-                {isSelected && snapshot.selectedCardIds.length === 1 && !isEditing && (
+                {/* Drag-to-Swap Handle Pill (visible cleanly on hover or selection) */}
+                {(isHovered || isSelected) && !isEditing && (
                   <foreignObject
-                    x={Math.max(8, card.rect.left + card.rect.width - 74 * uiScaleInv)}
-                    y={Math.max(8, card.rect.top + 8)}
-                    width={68 * uiScaleInv}
+                    x={Math.max(8, card.rect.left + card.rect.width - 38 * uiScaleInv)}
+                    y={Math.max(8, card.rect.top + 10)}
+                    width={30 * uiScaleInv}
                     height={30 * uiScaleInv}
                   >
                     <div
-                      className="flex items-center justify-end gap-1"
+                      draggable
+                      title="Drag onto another card to swap contents"
+                      data-testid={`card-drag-handle-${card.slotId}`}
+                      onDragStart={(e) => {
+                        e.stopPropagation();
+                        setDragSwapSourceId(card.id);
+                        e.dataTransfer.setData('application/x-mosaika-card', card.id);
+                        e.dataTransfer.effectAllowed = 'move';
+                      }}
+                      onDragEnd={() => {
+                        setDragSwapSourceId(null);
+                        setDragOverCardId(null);
+                      }}
                       onClick={(e) => e.stopPropagation()}
+                      className="flex items-center justify-center rounded-md bg-zinc-950/75 text-white hover:bg-zinc-900 cursor-grab active:cursor-grabbing"
+                      style={{
+                        width: `${26 * uiScaleInv}px`,
+                        height: `${26 * uiScaleInv}px`,
+                      }}
                     >
-                      <button
-                        type="button"
-                        title="Upload image into card"
-                        onClick={() => {
-                          setUploadTargetCardId(card.id);
-                          fileInputRef.current?.click();
-                        }}
-                        className="flex items-center justify-center rounded bg-zinc-950/85 text-white hover:bg-zinc-900 border border-white/15 cursor-pointer"
-                        style={{
-                          width: `${26 * uiScaleInv}px`,
-                          height: `${26 * uiScaleInv}px`,
-                        }}
-                      >
-                        <ImagePlus style={{ width: `${13 * uiScaleInv}px`, height: `${13 * uiScaleInv}px` }} />
-                      </button>
-                      <button
-                        type="button"
-                        title="Delete card"
-                        onClick={() => onDeleteCard(card.id)}
-                        className="flex items-center justify-center rounded bg-zinc-950/85 text-white hover:bg-red-600 border border-white/15 cursor-pointer"
-                        style={{
-                          width: `${26 * uiScaleInv}px`,
-                          height: `${26 * uiScaleInv}px`,
-                        }}
-                      >
-                        <Trash2 style={{ width: `${13 * uiScaleInv}px`, height: `${13 * uiScaleInv}px` }} />
-                      </button>
+                      <GripVertical
+                        style={{ width: `${14 * uiScaleInv}px`, height: `${14 * uiScaleInv}px` }}
+                      />
                     </div>
                   </foreignObject>
                 )}
               </g>
             );
           })}
+
+          {/* Subtle Film Grain Texture Overlay */}
+          {snapshot.grainEnabled && (
+            <rect
+              x={0}
+              y={0}
+              width={snapshot.canvasWidth}
+              height={snapshot.canvasHeight}
+              filter="url(#studio-film-grain)"
+              opacity={isDarkTheme ? 0.06 : 0.045}
+              pointerEvents="none"
+            />
+          )}
 
           {/* Swiss Grid Lattice Overlay */}
           {showGridOverlay && bentoOverlays?.lattice && (
@@ -935,7 +1003,7 @@ export function StudioCanvas({
                   />
                   <text
                     x={band.start + band.size / 2}
-                    y={Math.max(12, bentoOverlays.doc.anchorRect.top - 8)}
+                    y={Math.max(14, bentoOverlays.doc.anchorRect.top - 8)}
                     textAnchor="middle"
                     fontSize={badgeFontPx}
                     fontFamily="monospace"
@@ -1028,7 +1096,7 @@ export function StudioCanvas({
                               y={midY - 52 * uiScaleInv}
                               width={144 * uiScaleInv}
                               height={24 * uiScaleInv}
-                              rx={4 * uiScaleInv}
+                              rx={6 * uiScaleInv}
                               fill="#09090B"
                             />
                             <text
@@ -1108,7 +1176,7 @@ export function StudioCanvas({
                             y={centerY - 34 * uiScaleInv}
                             width={144 * uiScaleInv}
                             height={24 * uiScaleInv}
-                            rx={4 * uiScaleInv}
+                            rx={6 * uiScaleInv}
                             fill="#09090B"
                           />
                           <text
@@ -1135,21 +1203,24 @@ export function StudioCanvas({
         {snapshot.cards.length === 0 && (
           <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-6 pointer-events-none">
             <div
-              className="px-4 py-3 border text-xs max-w-xs"
+              className="px-5 py-4 rounded-xl text-xs max-w-xs shadow-sm"
               style={{
-                backgroundColor: isDarkTheme ? 'rgba(24, 24, 27, 0.92)' : 'rgba(255, 255, 255, 0.94)',
-                borderColor: isDarkTheme ? '#3F3F46' : '#D4D4D8',
+                backgroundColor: isDarkTheme ? 'rgba(20, 22, 27, 0.92)' : 'rgba(255, 255, 255, 0.94)',
+                border: `1px solid ${isDarkTheme ? 'rgba(255,255,255,0.1)' : 'rgba(15,23,42,0.1)'}`,
                 color: isDarkTheme ? '#E4E4E7' : '#27272A',
               }}
             >
-              <p className="font-semibold">Artboard is empty</p>
-              <p className="mt-1 opacity-75">
-                Pick an Intent or Blueprint in the Mosaika panel on the right to generate a layout.
+              <p className="font-semibold text-[13px]">Canvas is clear</p>
+              <p className="mt-1 opacity-70">
+                Open the Library or click Create Starter Bento in the Canvas panel on the right.
               </p>
             </div>
           </div>
         )}
       </div>
+
+      {/* Floating Bottom Dock Slot */}
+      {children}
     </div>
   );
 }

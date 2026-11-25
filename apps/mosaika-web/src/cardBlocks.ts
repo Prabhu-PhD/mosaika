@@ -1,5 +1,5 @@
 export type CardBlockType = 'text' | 'kpi' | 'checklist';
-export type CardSurfaceTreatment = 'solid' | 'sheen' | 'mesh';
+export type CardSurfaceTreatment = 'solid' | 'sheen' | 'mesh' | 'glass';
 
 export interface ParsedKpiBlock {
   value: string;
@@ -112,8 +112,14 @@ export function computeGradientStops(baseHex: string): {
 
 export function buildCardCssBackground(
   fillHex: string | null,
-  treatment: CardSurfaceTreatment | undefined
+  treatment: CardSurfaceTreatment | undefined,
+  isDarkTheme = false
 ): string {
+  if (treatment === 'glass') {
+    return isDarkTheme
+      ? 'background: rgba(20, 22, 28, 0.56); backdrop-filter: blur(22px) saturate(145%); -webkit-backdrop-filter: blur(22px) saturate(145%); box-shadow: inset 0 1px 0 rgba(255,255,255,0.16);'
+      : 'background: rgba(255, 255, 255, 0.68); backdrop-filter: blur(22px) saturate(145%); -webkit-backdrop-filter: blur(22px) saturate(145%); box-shadow: inset 0 1px 0 rgba(255,255,255,0.85);';
+  }
   if (!fillHex) return '';
   if (!treatment || treatment === 'solid') {
     return `background-color: ${fillHex};`;

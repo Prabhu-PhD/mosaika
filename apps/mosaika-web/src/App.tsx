@@ -1,10 +1,22 @@
-import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
-import { BentoTaskPane, MosaikaLogo } from '@bento/ui';
-import { Check, Download, Grid3X3, Link2, Moon, Sun, Trash2 } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { MosaikaLogo } from '@bento/ui';
+import {
+  Check,
+  Download,
+  LayoutGrid,
+  Link2,
+  Moon,
+  Redo2,
+  Sun,
+  Undo2,
+} from 'lucide-react';
 import { ExportModal } from './components/ExportModal.js';
+import { FloatingDock } from './components/FloatingDock.js';
+import { LibraryDrawer } from './components/LibraryDrawer.js';
 import { StudioCanvas } from './components/StudioCanvas.js';
+import { StudioInspector } from './components/StudioInspector.js';
 import { decodeSharePayload, encodeSharePayload } from './exporters.js';
-import { BRAND_ACCENT_SWATCHES, CANVAS_PRESETS } from './presets.js';
+import { CANVAS_PRESETS } from './presets.js';
 import { WebStudioHost } from './studioHost.js';
 
 const PRESET_GROUPS = ['Web', 'Social', 'Print'] as const;
@@ -24,39 +36,94 @@ export function App() {
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
   const [showGridOverlay, setShowGridOverlay] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  const [libraryOpen, setLibraryOpen] = useState(false);
   const [shareCopied, setShareCopied] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
 
   const [widthInput, setWidthInput] = useState(String(snapshot.canvasWidth));
   const [heightInput, setHeightInput] = useState(String(snapshot.canvasHeight));
-  const [padInput, setPadInput] = useState(String(snapshot.canvasPadding));
 
   useEffect(() => {
     setWidthInput(String(snapshot.canvasWidth));
     setHeightInput(String(snapshot.canvasHeight));
-    setPadInput(String(snapshot.canvasPadding));
-  }, [snapshot.canvasWidth, snapshot.canvasHeight, snapshot.canvasPadding]);
+  }, [snapshot.canvasWidth, snapshot.canvasHeight]);
 
-  // Global G shortcut to toggle Swiss Grid Overlay
+  const showToast = useCallback((message: string) => {
+    setToast(message);
+    setTimeout(() => {
+      setToast((prev) => (prev === message ? null : prev));
+    }, 2600);
+  }, []);
+
+  // Global Studio Keyboard Shortcuts (G = Grid, Space = Shuffle, Ctrl/Cmd+Z/Y = Undo/Redo)
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const tag = document.activeElement?.tagName.toLowerCase();
-      if (tag === 'textarea' || tag === 'input' || tag === 'select') return;
+      const isEditingText = tag === 'textarea' || tag === 'input' || tag === 'select';
+
+      if ((e.ctrlKey || e.metaKey) && !isEditingText) {
+        const key = e.key.toLowerCase();
+        if (key === 'z' && !e.shiftKey) {
+          e.preventDefault();
+          host.undo();
+          return;
+        }
+        if ((key === 'z' && e.shiftKey) || key === 'y') {
+          e.preventDefault();
+          host.redo();
+          return;
+        }
+      }
+
+      if (isEditingText) return;
       if (e.key === 'g' || e.key === 'G') {
         setShowGridOverlay((prev) => !prev);
+      } else if (e.code === 'Space' && !exportOpen && !libraryOpen) {
+        e.preventDefault();
+        host.randomizeSeed();
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, []);
+  }, [exportOpen, host, libraryOpen]);
+
+  // Global Ctrl+V Clipboard Image Paste into selected card (#17)
+  useEffect(() => {
+    const onPaste = (e: ClipboardEvent) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i]!;
+        if (item.type.startsWith('image/')) {
+          const file = item.getAsFile();
+          if (!file) continue;
+          const snap = host.getSnapshot();
+          const targetId = snap.selectedCardIds[0] ?? snap.cards[0]?.id;
+          if (!targetId) return;
+          e.preventDefault();
+          const reader = new FileReader();
+          reader.onload = () => {
+            if (typeof reader.result === 'string') {
+              host.setCardImageDataUrl(targetId, reader.result, true);
+              showToast('Pasted image into card.');
+            }
+          };
+          reader.readAsDataURL(file);
+          break;
+        }
+      }
+    };
+    window.addEventListener('paste', onPaste);
+    return () => window.removeEventListener('paste', onPaste);
+  }, [host, showToast]);
 
   const isDark = theme === 'dark';
 
-  const commitDimensions = (nextWStr: string, nextHStr: string, nextPadStr: string) => {
+  const commitDimensions = (nextWStr: string, nextHStr: string) => {
     const w = Number.parseInt(nextWStr, 10);
     const h = Number.parseInt(nextHStr, 10);
-    const p = Number.parseInt(nextPadStr, 10);
     if (!Number.isFinite(w) || !Number.isFinite(h)) return;
-    host.setCanvasDimensions(w, h, Number.isFinite(p) ? p : snapshot.canvasPadding);
+    host.setCanvasDimensions(w, h, snapshot.canvasPadding);
   };
 
   const handleToggleTheme = () => {
@@ -74,46 +141,62 @@ export function App() {
     try {
       await navigator.clipboard.writeText(url);
       setShareCopied(true);
+      showToast('Copied zero-backend share link.');
       setTimeout(() => setShareCopied(false), 1800);
     } catch {
       // Ignore clipboard permission denials
     }
   };
 
+  const border = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.08)';
+  const well = isDark ? '#181A20' : '#F4F5F8';
+  const fg = isDark ? '#F4F4F5' : '#18181B';
+  const muted = isDark ? '#9CA3AF' : '#64748B';
+
   return (
     <div
       className="h-screen w-screen flex flex-col overflow-hidden"
       style={{
-        backgroundColor: isDark ? '#0B0C0D' : '#FFFFFF',
-        color: isDark ? '#F4F4F5' : '#111214',
+        backgroundColor: isDark ? '#090A0D' : '#EEF0F4',
+        color: fg,
       }}
     >
-      {/* Top Studio Bar (44px Swiss Monochrome) */}
+      {/* Calm 52px Top Studio Bar — 3 quiet clusters */}
       <header
-        className="h-11 shrink-0 px-3 flex items-center justify-between gap-2 overflow-x-auto"
+        className="h-[52px] shrink-0 px-4 flex items-center justify-between gap-3"
         style={{
-          backgroundColor: isDark ? '#111214' : '#FFFFFF',
-          borderBottom: `1px solid ${isDark ? '#27272A' : '#E4E4E7'}`,
+          backgroundColor: isDark ? '#111216' : '#FFFFFF',
+          borderBottom: `1px solid ${border}`,
         }}
       >
-        {/* Brand Mark */}
-        <div className="flex items-center gap-2 shrink-0">
-          <MosaikaLogo className="h-5 w-5" />
-          <div className="flex items-baseline gap-1.5">
-            <span className="text-[13px] font-semibold tracking-tight">Mosaika</span>
+        {/* Left: Brand + Library Trigger */}
+        <div className="flex items-center gap-3 shrink-0">
+          <div className="flex items-center gap-2">
             <span
-              className="text-[10px] font-mono uppercase tracking-wider px-1 py-0.5"
+              className="w-7 h-7 rounded-lg flex items-center justify-center"
               style={{
-                border: `1px solid ${isDark ? '#2E3035' : '#D4D4D8'}`,
-                color: isDark ? '#A1A1AA' : '#52525B',
+                backgroundColor: isDark ? '#F4F4F5' : '#18181B',
+                color: isDark ? '#111216' : '#FFFFFF',
               }}
             >
-              Studio
+              <MosaikaLogo className="h-4 w-4" />
             </span>
+            <span className="text-[14px] font-semibold tracking-tight">Mosaika</span>
           </div>
+
+          <button
+            type="button"
+            data-testid="topbar-btn-library"
+            onClick={() => setLibraryOpen(true)}
+            className="h-8 px-3 rounded-lg text-[12px] font-medium inline-flex items-center gap-1.5 cursor-pointer transition-colors"
+            style={{ backgroundColor: well, color: fg }}
+          >
+            <LayoutGrid className="w-3.5 h-3.5" style={{ color: muted }} />
+            <span>Library</span>
+          </button>
         </div>
 
-        {/* Center Canvas Preset + Dimensions + Brand Accent */}
+        {/* Center: Format Preset Pill + Compact W × H */}
         <div className="flex items-center gap-2 shrink-0">
           <select
             aria-label="Canvas Preset"
@@ -124,11 +207,11 @@ export function App() {
                 host.selectPreset(e.target.value);
               }
             }}
-            className="h-7 px-2 text-[11px] font-medium outline-none cursor-pointer"
+            className="h-8 px-3 rounded-lg text-[12px] font-medium outline-none cursor-pointer"
             style={{
-              backgroundColor: isDark ? '#18181B' : '#FAFAFA',
-              color: isDark ? '#F4F4F5' : '#18181B',
-              border: `1px solid ${isDark ? '#2E3035' : '#D4D4D8'}`,
+              backgroundColor: well,
+              color: fg,
+              border: `1px solid ${border}`,
             }}
           >
             {PRESET_GROUPS.map((group) => (
@@ -143,13 +226,9 @@ export function App() {
             {snapshot.presetId === 'custom' && <option value="custom">Custom Size</option>}
           </select>
 
-          {/* Compact W × H + Pad */}
           <div
-            className="hidden lg:flex items-center gap-1 h-7 px-1.5 text-[11px] font-mono"
-            style={{
-              border: `1px solid ${isDark ? '#2E3035' : '#D4D4D8'}`,
-              backgroundColor: isDark ? '#18181B' : '#FAFAFA',
-            }}
+            className="hidden lg:flex items-center gap-1 h-8 px-2.5 rounded-lg text-[11.5px] font-mono"
+            style={{ backgroundColor: well, border: `1px solid ${border}` }}
           >
             <input
               aria-label="Canvas Width"
@@ -159,13 +238,13 @@ export function App() {
               max={3840}
               value={widthInput}
               onChange={(e) => setWidthInput(e.target.value)}
-              onBlur={() => commitDimensions(widthInput, heightInput, padInput)}
+              onBlur={() => commitDimensions(widthInput, heightInput)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter') commitDimensions(widthInput, heightInput, padInput);
+                if (e.key === 'Enter') commitDimensions(widthInput, heightInput);
               }}
-              className="w-12 bg-transparent text-right outline-none"
+              className="w-11 bg-transparent text-right outline-none"
             />
-            <span className="opacity-45">×</span>
+            <span style={{ color: muted }}>×</span>
             <input
               aria-label="Canvas Height"
               data-testid="canvas-height-input"
@@ -174,130 +253,62 @@ export function App() {
               max={3840}
               value={heightInput}
               onChange={(e) => setHeightInput(e.target.value)}
-              onBlur={() => commitDimensions(widthInput, heightInput, padInput)}
+              onBlur={() => commitDimensions(widthInput, heightInput)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter') commitDimensions(widthInput, heightInput, padInput);
+                if (e.key === 'Enter') commitDimensions(widthInput, heightInput);
               }}
-              className="w-12 bg-transparent text-right outline-none"
-            />
-            <span className="opacity-35 px-0.5">|</span>
-            <span className="opacity-55 text-[10px]">Pad</span>
-            <input
-              aria-label="Canvas Padding"
-              type="number"
-              min={0}
-              max={200}
-              value={padInput}
-              onChange={(e) => setPadInput(e.target.value)}
-              onBlur={() => commitDimensions(widthInput, heightInput, padInput)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') commitDimensions(widthInput, heightInput, padInput);
-              }}
-              className="w-9 bg-transparent text-right outline-none"
-            />
-          </div>
-
-          {/* Brand Accent Swatches */}
-          <div
-            className="hidden md:flex items-center gap-1 h-7 px-2"
-            style={{
-              border: `1px solid ${isDark ? '#2E3035' : '#D4D4D8'}`,
-            }}
-          >
-            <span className="text-[10px] font-mono uppercase opacity-60 mr-0.5">Accent</span>
-            {BRAND_ACCENT_SWATCHES.map((swatch) => {
-              const active = snapshot.brandAccentHex.toLowerCase() === swatch.hex.toLowerCase();
-              return (
-                <button
-                  key={swatch.hex}
-                  type="button"
-                  title={`Brand Accent: ${swatch.label} (${swatch.hex})`}
-                  data-testid={`accent-swatch-${swatch.label.toLowerCase()}`}
-                  onClick={() => host.setBrandAccent(swatch.hex)}
-                  className="w-4 h-4 rounded-full cursor-pointer transition-transform hover:scale-110"
-                  style={{
-                    backgroundColor: swatch.hex,
-                    boxShadow: active
-                      ? isDark
-                        ? '0 0 0 1.5px #111214, 0 0 0 3px #F4F4F5'
-                        : '0 0 0 1.5px #FFFFFF, 0 0 0 3px #111214'
-                      : 'inset 0 0 0 1px rgba(0,0,0,0.18)',
-                  }}
-                />
-              );
-            })}
-            <input
-              aria-label="Custom Brand Accent Color"
-              type="color"
-              value={snapshot.brandAccentHex}
-              onChange={(e) => host.setBrandAccent(e.target.value)}
-              className="w-4 h-4 ml-0.5 cursor-pointer bg-transparent border-0 p-0"
-              title="Custom Brand Accent"
+              className="w-11 bg-transparent text-right outline-none"
             />
           </div>
         </div>
 
-        {/* Right Actions: Grid, Theme, Clear, Share, Export */}
+        {/* Right: Undo/Redo, Theme, Share, Export */}
         <div className="flex items-center gap-1.5 shrink-0">
-          <button
-            type="button"
-            title="Toggle Swiss Grid Overlay (G)"
-            data-testid="btn-toggle-grid"
-            onClick={() => setShowGridOverlay((v) => !v)}
-            className="h-7 px-2 inline-flex items-center gap-1 text-[11px] font-medium cursor-pointer"
-            style={{
-              border: `1px solid ${
-                showGridOverlay ? (isDark ? '#F4F4F5' : '#111214') : isDark ? '#2E3035' : '#D4D4D8'
-              }`,
-              backgroundColor: showGridOverlay
-                ? isDark
-                  ? '#F4F4F5'
-                  : '#111214'
-                : 'transparent',
-              color: showGridOverlay
-                ? isDark
-                  ? '#111214'
-                  : '#FFFFFF'
-                : isDark
-                  ? '#E4E4E7'
-                  : '#27272A',
-            }}
+          <div
+            className="inline-flex items-center rounded-lg p-0.5"
+            style={{ backgroundColor: well }}
           >
-            <Grid3X3 className="w-3.5 h-3.5" />
-            <span className="hidden xl:inline">Grid</span>
-          </button>
+            <button
+              type="button"
+              data-testid="btn-studio-undo"
+              disabled={!snapshot.canUndo}
+              onClick={() => host.undo()}
+              title="Undo (Ctrl+Z)"
+              className="w-7 h-7 rounded-md inline-flex items-center justify-center cursor-pointer disabled:opacity-30"
+            >
+              <Undo2 className="w-3.5 h-3.5" />
+            </button>
+            <button
+              type="button"
+              data-testid="btn-studio-redo"
+              disabled={!snapshot.canRedo}
+              onClick={() => host.redo()}
+              title="Redo (Ctrl+Shift+Z)"
+              className="w-7 h-7 rounded-md inline-flex items-center justify-center cursor-pointer disabled:opacity-30"
+            >
+              <Redo2 className="w-3.5 h-3.5" />
+            </button>
+          </div>
 
           <button
             type="button"
             title={isDark ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
             data-testid="btn-toggle-theme"
             onClick={handleToggleTheme}
-            className="h-7 w-7 inline-flex items-center justify-center cursor-pointer"
-            style={{ border: `1px solid ${isDark ? '#2E3035' : '#D4D4D8'}` }}
+            className="w-8 h-8 rounded-lg inline-flex items-center justify-center cursor-pointer"
+            style={{ backgroundColor: well }}
           >
             {isDark ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
           </button>
 
           <button
             type="button"
-            title="Clear Artboard"
-            data-testid="btn-clear-canvas"
-            onClick={() => host.clearCanvas()}
-            className="h-7 w-7 inline-flex items-center justify-center cursor-pointer hover:text-red-500"
-            style={{ border: `1px solid ${isDark ? '#2E3035' : '#D4D4D8'}` }}
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-          </button>
-
-          <button
-            type="button"
             data-testid="btn-share-url"
             onClick={() => void handleCopyShareUrl()}
-            className="h-7 px-2.5 inline-flex items-center gap-1 text-[11px] font-medium cursor-pointer"
+            className="h-8 px-3 rounded-lg inline-flex items-center gap-1.5 text-[12px] font-medium cursor-pointer"
             style={{
-              border: `1px solid ${isDark ? '#2E3035' : '#D4D4D8'}`,
-              backgroundColor: shareCopied ? '#059669' : 'transparent',
-              color: shareCopied ? '#FFFFFF' : isDark ? '#F4F4F5' : '#18181B',
+              backgroundColor: shareCopied ? '#059669' : well,
+              color: shareCopied ? '#FFFFFF' : fg,
             }}
           >
             {shareCopied ? <Check className="w-3.5 h-3.5" /> : <Link2 className="w-3.5 h-3.5" />}
@@ -308,10 +319,10 @@ export function App() {
             type="button"
             data-testid="btn-open-export"
             onClick={() => setExportOpen(true)}
-            className="h-7 px-3 inline-flex items-center gap-1.5 text-[11px] font-semibold cursor-pointer hover:opacity-90"
+            className="h-8 px-3.5 rounded-lg inline-flex items-center gap-1.5 text-[12px] font-semibold cursor-pointer hover:opacity-90"
             style={{
-              backgroundColor: isDark ? '#F4F4F5' : '#111214',
-              color: isDark ? '#111214' : '#FFFFFF',
+              backgroundColor: isDark ? '#F4F4F5' : '#18181B',
+              color: isDark ? '#111216' : '#FFFFFF',
             }}
           >
             <Download className="w-3.5 h-3.5" />
@@ -320,32 +331,65 @@ export function App() {
         </div>
       </header>
 
-      {/* Main Split Workbench: Left Artboard + Right Mosaika Inspector */}
-      <main className="flex-1 min-h-0 flex overflow-hidden">
+      {/* Main Split Workbench: Spacious Artboard + Serene Contextual Inspector */}
+      <main className="relative flex-1 min-h-0 flex overflow-hidden">
         <StudioCanvas
           snapshot={snapshot}
           isDarkTheme={isDark}
           showGridOverlay={showGridOverlay}
           onSelectCards={(ids) => host.selectCards(ids)}
           onUpdateCardText={(cardId, text) => host.updateCardText(cardId, text)}
-          onSetCardBlockType={(cardId, bt) => host.setCardBlockType(cardId, bt)}
-          onSetCardSurfaceTreatment={(cardId, surf) => host.setCardSurfaceTreatment(cardId, surf)}
           onSetCardImage={(cardId, dataUrl) => host.setCardImageDataUrl(cardId, dataUrl, true)}
-          onDeleteCard={(cardId) => host.deleteCardById(cardId)}
+          onSwapCardContents={(src, dst) => {
+            host.swapCardContents(src, dst);
+            showToast('Swapped tile contents.');
+          }}
+          onDeleteCard={(cardId) => host.deleteCardAndReflow(cardId)}
           onResizeSplit={(nodeId, ratio, snap, commit) =>
             host.resizeActiveSplit(nodeId, ratio, snap, commit)
           }
+        >
+          <FloatingDock
+            host={host}
+            snapshot={snapshot}
+            isDarkTheme={isDark}
+            showGridOverlay={showGridOverlay}
+            onToggleGrid={() => setShowGridOverlay((v) => !v)}
+          />
+        </StudioCanvas>
+
+        <StudioInspector
+          host={host}
+          snapshot={snapshot}
+          isDarkTheme={isDark}
+          onOpenLibrary={() => setLibraryOpen(true)}
+          onToast={showToast}
         />
 
-        <aside
-          className="w-[336px] shrink-0 h-full overflow-hidden"
-          style={{
-            borderLeft: `1px solid ${isDark ? '#27272A' : '#E4E4E7'}`,
-          }}
-        >
-          <BentoTaskPane host={host} theme={theme} fullWidth />
-        </aside>
+        {/* Quiet Floating Toast */}
+        {toast && (
+          <div
+            role="status"
+            data-testid="studio-toast"
+            className="fixed top-16 left-1/2 -translate-x-1/2 z-40 px-3.5 py-2 rounded-full text-[12px] font-medium shadow-lg"
+            style={{
+              backgroundColor: isDark ? '#F4F4F5' : '#18181B',
+              color: isDark ? '#111216' : '#FFFFFF',
+            }}
+          >
+            {toast}
+          </div>
+        )}
       </main>
+
+      <LibraryDrawer
+        open={libraryOpen}
+        host={host}
+        snapshot={snapshot}
+        isDarkTheme={isDark}
+        onClose={() => setLibraryOpen(false)}
+        onToast={showToast}
+      />
 
       <ExportModal
         open={exportOpen}

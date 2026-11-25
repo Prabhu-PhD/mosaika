@@ -1,30 +1,64 @@
 import {
   BENTO_TAGS,
   type BentoDocumentState,
+  type BentoTemplate,
   type CellRole,
   type CellShapeKind,
   type CellStyleSpec,
+  type EntranceAnimationPreset,
   type EntranceAnimationSpec,
+  type HierarchyMode,
   type HostCapabilities,
   type IBentoHost,
   type LayoutDiffPayload,
+  type LayoutIntent,
   type MultiSlideItem,
   type RectPt,
+  type SavedBentoBlueprint,
   type SelectionContext,
+  type SplitAxis,
   type StyleApplyPayload,
+  type StylePresetId,
 } from '@bento/contract';
 import {
+  applyTemplateToDocument,
   buildCellRenderSpecs,
+  buildEntranceAnimationSpec,
   computeLayoutDiff,
   computeStylePayload,
   createIntentBentoDocument,
+  deleteLeafFromTree,
   getAutoContrastTextColor,
+  getIntentDefinition,
+  getPresetDefaultRadius,
   hydrateStateFromJson,
+  instantiateSavedBlueprint,
+  mirrorBentoLayout,
+  nextDeterministicSeed,
+  parseSeedCode,
+  regenerateWithLocks,
   resizeSplitRatio,
-  round2,
+  setLeafRole,
+  setLeafShapeKind,
+  splitLeaf,
+  toggleLeafLock,
+  updateNonStructuralParams,
+  type MirrorDirection,
 } from '@bento/core';
+import {
+  deleteBlueprintFromLibrary,
+  loadSavedBlueprints,
+  saveBlueprintToLibrary,
+} from '@bento/ui';
 import type { CardBlockType, CardSurfaceTreatment } from './cardBlocks.js';
 import { CANVAS_PRESETS, computeArtboardContentRect } from './presets.js';
+import type {
+  ArtboardBackdropId,
+  CardIconId,
+  CardTextAlign,
+  CornerStyle,
+  FontPairingId,
+} from './visualCraft.js';
 
 export interface StudioCard {
   id: string;
@@ -40,6 +74,9 @@ export interface StudioCard {
   contentHint?: string;
   tags: Record<string, string>;
   text: string;
+  kicker?: string;
+  icon?: CardIconId;
+  textAlign?: CardTextAlign;
   blockType?: CardBlockType;
   surfaceTreatment?: CardSurfaceTreatment;
   imageDataUrl?: string;
@@ -53,12 +90,22 @@ export interface StudioSnapshot {
   canvasPadding: number;
   canvasBgHex: string;
   brandAccentHex: string;
+  backdrop: ArtboardBackdropId;
+  backdropImageUrl?: string;
+  grainEnabled: boolean;
+  cornerStyle: CornerStyle;
+  fontPairing: FontPairingId;
   presetId: string;
   cards: StudioCard[];
   selectedCardIds: string[];
   activeDoc: BentoDocumentState | null;
   activeAnimation: EntranceAnimationSpec | null;
   animationRunId: number;
+  savedBlueprints: SavedBentoBlueprint[];
+  canUndo: boolean;
+  canRedo: boolean;
+  canSeedBack: boolean;
+  canSeedForward: boolean;
   version: number;
 }
 
@@ -68,13 +115,37 @@ export interface ShareableStudioPayload {
   pad: number;
   bg: string;
   accent: string;
+  backdrop?: ArtboardBackdropId;
+  grain?: boolean;
+  corners?: CornerStyle;
+  font?: FontPairingId;
   state: BentoDocumentState;
   texts: Record<string, string>;
+  kickers?: Record<string, string>;
+  icons?: Record<string, CardIconId>;
+  aligns?: Record<string, CardTextAlign>;
   blocks?: Record<string, CardBlockType>;
   surfaces?: Record<string, CardSurfaceTreatment>;
 }
 
+interface StudioUndoRecord {
+  canvasWidth: number;
+  canvasHeight: number;
+  canvasPadding: number;
+  canvasBgHex: string;
+  brandAccentHex: string;
+  backdrop: ArtboardBackdropId;
+  backdropImageUrl?: string;
+  grainEnabled: boolean;
+  cornerStyle: CornerStyle;
+  fontPairing: FontPairingId;
+  activeDoc: BentoDocumentState | null;
+  cards: StudioCard[];
+  selectedCardIds: string[];
+}
+
 const STORAGE_KEY = 'mosaika_web_studio_v1';
+const MAX_UNDO_STEPS = 40;
 
 const STUDIO_CAPABILITIES: HostCapabilities = {
   platform: 'browser-harness',
@@ -102,18 +173,32 @@ const DEFAULT_CARD_STYLE: CellStyleSpec = {
   shadow: null,
 };
 
+function cloneUndoRecord(rec: StudioUndoRecord): StudioUndoRecord {
+  return JSON.parse(JSON.stringify(rec)) as StudioUndoRecord;
+}
+
 export class WebStudioHost implements IBentoHost {
   private canvasWidth: number;
   private canvasHeight: number;
   private canvasPadding: number;
   private canvasBgHex = '#FFFFFF';
-  private brandAccentHex = '#1B1D1E';
+  private brandAccentHex = '#2563EB';
+  private backdrop: ArtboardBackdropId = 'aurora';
+  private backdropImageUrl: string | undefined;
+  private grainEnabled = true;
+  private cornerStyle: CornerStyle = 'squircle';
+  private fontPairing: FontPairingId = 'swiss';
   private presetId: string;
   private cards: StudioCard[] = [];
   private selectedCardIds: string[] = [];
   private activeDoc: BentoDocumentState | null = null;
   private activeAnimation: EntranceAnimationSpec | null = null;
   private animationRunId = 0;
+  private savedBlueprints: SavedBentoBlueprint[] = [];
+  private seedTrail: number[] = [48219];
+  private seedIndex = 0;
+  private undoStack: StudioUndoRecord[] = [];
+  private redoStack: StudioUndoRecord[] = [];
   private cardSeq = 1;
   private version = 1;
   private isDarkTheme = false;
@@ -128,6 +213,7 @@ export class WebStudioHost implements IBentoHost {
     this.canvasWidth = initialPreset.width;
     this.canvasHeight = initialPreset.height;
     this.canvasPadding = initialPreset.defaultPadding;
+    this.savedBlueprints = loadSavedBlueprints();
 
     if (options?.initialSharePayload) {
       this.hydrateFromSharePayload(options.initialSharePayload);
@@ -137,26 +223,88 @@ export class WebStudioHost implements IBentoHost {
     this.rebuildSnapshot();
   }
 
+  private captureUndoRecord(): StudioUndoRecord {
+    return cloneUndoRecord({
+      canvasWidth: this.canvasWidth,
+      canvasHeight: this.canvasHeight,
+      canvasPadding: this.canvasPadding,
+      canvasBgHex: this.canvasBgHex,
+      brandAccentHex: this.brandAccentHex,
+      backdrop: this.backdrop,
+      backdropImageUrl: this.backdropImageUrl,
+      grainEnabled: this.grainEnabled,
+      cornerStyle: this.cornerStyle,
+      fontPairing: this.fontPairing,
+      activeDoc: this.activeDoc,
+      cards: this.cards,
+      selectedCardIds: this.selectedCardIds,
+    });
+  }
+
+  private pushUndo(): void {
+    this.undoStack.push(this.captureUndoRecord());
+    if (this.undoStack.length > MAX_UNDO_STEPS) {
+      this.undoStack.shift();
+    }
+    this.redoStack = [];
+  }
+
+  private restoreUndoRecord(rec: StudioUndoRecord): void {
+    const copy = cloneUndoRecord(rec);
+    this.canvasWidth = copy.canvasWidth;
+    this.canvasHeight = copy.canvasHeight;
+    this.canvasPadding = copy.canvasPadding;
+    this.canvasBgHex = copy.canvasBgHex;
+    this.brandAccentHex = copy.brandAccentHex;
+    this.backdrop = copy.backdrop;
+    this.backdropImageUrl = copy.backdropImageUrl;
+    this.grainEnabled = copy.grainEnabled;
+    this.cornerStyle = copy.cornerStyle;
+    this.fontPairing = copy.fontPairing;
+    this.presetId = this.detectPresetId(this.canvasWidth, this.canvasHeight);
+    this.activeDoc = copy.activeDoc;
+    this.cards = copy.cards;
+    this.selectedCardIds = copy.selectedCardIds;
+    this.persistToLocalStorage();
+    this.emitChange(true);
+  }
+
+  public undo(): void {
+    const prev = this.undoStack.pop();
+    if (!prev) return;
+    this.redoStack.push(this.captureUndoRecord());
+    this.restoreUndoRecord(prev);
+  }
+
+  public redo(): void {
+    const next = this.redoStack.pop();
+    if (!next) return;
+    this.undoStack.push(this.captureUndoRecord());
+    this.restoreUndoRecord(next);
+  }
+
   private seedStarterLayout(): void {
     const rect = computeArtboardContentRect(this.canvasWidth, this.canvasHeight, this.canvasPadding);
     const created = createIntentBentoDocument(rect, 'executive-brief', {
       count: 5,
-      gutterPt: 14,
-      radiusPt: 16,
+      gutterPt: 16,
+      radiusPt: 20,
       seed: 48219,
       stylePreset: 'soft-modern',
       hierarchyMode: 'hero-accent',
     });
     if (!created.ok) return;
 
+    this.seedTrail = [48219];
+    this.seedIndex = 0;
     this.applyDocumentDirectly(
       created.value,
       {
         slot_01: 'Mosaika Studio\nDesign bounded Swiss bento grids for web, social & PowerPoint.',
-        slot_02: '144\n+12 Intents\nDeduplicated Blueprints',
+        slot_02: '144\n+12 Intents\nCurated Blueprints',
         slot_03: 'Export Anywhere\nEditable .pptx slides\nVector SVG & 2× PNG\nResponsive Tailwind',
-        slot_04: 'Live Reflow\nSwitch 1440×900 to 1080×1080',
-        slot_05: 'Motion Ready\nStaggered CSS & PPTX entrances',
+        slot_04: 'Live Reflow\nSwitch 1440×900 to 1080×1080 effortlessly.',
+        slot_05: 'Glass & Motion\nAurora backdrops, squircles & staggered entrances.',
       },
       {
         slot_02: 'kpi',
@@ -164,15 +312,37 @@ export class WebStudioHost implements IBentoHost {
       },
       {
         slot_01: 'mesh',
+        slot_02: 'glass',
+        slot_03: 'glass',
+        slot_04: 'glass',
+        slot_05: 'glass',
+      },
+      {
+        slot_01: 'STUDIO 2.0',
+        slot_04: 'ADAPTIVE',
+        slot_05: 'CRAFT',
+      },
+      {
+        slot_01: 'sparkles',
+        slot_04: 'layers',
+        slot_05: 'zap',
+      },
+      {
+        slot_01: 'bl',
       }
     );
+    // Start cleanly in Canvas mode so first-time users see the calm Canvas controls!
+    this.selectedCardIds = [];
   }
 
   private applyDocumentDirectly(
     doc: BentoDocumentState,
     initialTexts?: Record<string, string>,
     initialBlocks?: Record<string, CardBlockType>,
-    initialSurfaces?: Record<string, CardSurfaceTreatment>
+    initialSurfaces?: Record<string, CardSurfaceTreatment>,
+    initialKickers?: Record<string, string>,
+    initialIcons?: Record<string, CardIconId>,
+    initialAligns?: Record<string, CardTextAlign>
   ): void {
     this.activeDoc = doc;
     const specs = buildCellRenderSpecs(doc, { supportsCustomGeometry: true });
@@ -188,6 +358,7 @@ export class WebStudioHost implements IBentoHost {
 
     this.cards = specs.map((spec) => {
       const prev = prevBySlot.get(spec.slotId);
+      const baseStyle = styleBySlot.get(spec.slotId) ?? { ...DEFAULT_CARD_STYLE, slotId: spec.slotId };
       return {
         id: prev?.id ?? `card_${this.cardSeq++}`,
         slotId: spec.slotId,
@@ -202,15 +373,23 @@ export class WebStudioHost implements IBentoHost {
         contentHint: spec.contentHint,
         tags: { ...spec.tags },
         text: initialTexts?.[spec.slotId] ?? prev?.text ?? '',
+        kicker: initialKickers?.[spec.slotId] ?? prev?.kicker,
+        icon: initialIcons?.[spec.slotId] ?? prev?.icon ?? 'none',
+        textAlign: initialAligns?.[spec.slotId] ?? prev?.textAlign ?? 'tl',
         blockType: initialBlocks?.[spec.slotId] ?? prev?.blockType ?? 'text',
-        surfaceTreatment: initialSurfaces?.[spec.slotId] ?? prev?.surfaceTreatment ?? 'solid',
+        surfaceTreatment:
+          initialSurfaces?.[spec.slotId] ??
+          prev?.surfaceTreatment ??
+          (this.backdrop !== 'paper' && spec.role !== 'hero' ? 'glass' : 'solid'),
         imageDataUrl: prev?.imageDataUrl,
         hasScrim: prev?.hasScrim,
-        style: styleBySlot.get(spec.slotId) ?? { ...DEFAULT_CARD_STYLE, slotId: spec.slotId },
+        style: prev?.imageDataUrl ? { ...baseStyle, textColorHex: '#FFFFFF' } : baseStyle,
       };
     });
 
-    this.selectedCardIds = this.cards[0] ? [this.cards[0].id] : [];
+    // Keep valid selectedCardIds if they still exist
+    const liveIds = new Set(this.cards.map((c) => c.id));
+    this.selectedCardIds = this.selectedCardIds.filter((id) => liveIds.has(id));
     this.persistToLocalStorage();
   }
 
@@ -243,36 +422,61 @@ export class WebStudioHost implements IBentoHost {
     this.canvasHeight = Math.max(240, Math.min(3840, Math.round(payload.h)));
     this.canvasPadding = Math.max(0, Math.round(payload.pad));
     this.canvasBgHex = payload.bg || '#FFFFFF';
-    this.brandAccentHex = payload.accent || '#1B1D1E';
+    this.brandAccentHex = payload.accent || '#2563EB';
+    this.backdrop = payload.backdrop ?? 'paper';
+    this.grainEnabled = Boolean(payload.grain);
+    this.cornerStyle = payload.corners ?? 'squircle';
+    this.fontPairing = payload.font ?? 'swiss';
     this.presetId = this.detectPresetId(this.canvasWidth, this.canvasHeight);
-    this.applyDocumentDirectly(payload.state, payload.texts, payload.blocks, payload.surfaces);
+    this.seedTrail = [payload.state.params.seed];
+    this.seedIndex = 0;
+    this.applyDocumentDirectly(
+      payload.state,
+      payload.texts,
+      payload.blocks,
+      payload.surfaces,
+      payload.kickers,
+      payload.icons,
+      payload.aligns
+    );
     this.emitChange(true);
   }
 
   public toSharePayload(): ShareableStudioPayload | null {
     if (!this.activeDoc) return null;
     const texts: Record<string, string> = {};
+    const kickers: Record<string, string> = {};
+    const icons: Record<string, CardIconId> = {};
+    const aligns: Record<string, CardTextAlign> = {};
     const blocks: Record<string, CardBlockType> = {};
     const surfaces: Record<string, CardSurfaceTreatment> = {};
+
     for (const card of this.cards) {
-      if (card.text.trim().length > 0) {
-        texts[card.slotId] = card.text;
-      }
-      if (card.blockType && card.blockType !== 'text') {
-        blocks[card.slotId] = card.blockType;
-      }
+      if (card.text.trim().length > 0) texts[card.slotId] = card.text;
+      if (card.kicker?.trim()) kickers[card.slotId] = card.kicker.trim();
+      if (card.icon && card.icon !== 'none') icons[card.slotId] = card.icon;
+      if (card.textAlign && card.textAlign !== 'tl') aligns[card.slotId] = card.textAlign;
+      if (card.blockType && card.blockType !== 'text') blocks[card.slotId] = card.blockType;
       if (card.surfaceTreatment && card.surfaceTreatment !== 'solid') {
         surfaces[card.slotId] = card.surfaceTreatment;
       }
     }
+
     return {
       w: this.canvasWidth,
       h: this.canvasHeight,
       pad: this.canvasPadding,
       bg: this.canvasBgHex,
       accent: this.brandAccentHex,
+      backdrop: this.backdrop,
+      grain: this.grainEnabled,
+      corners: this.cornerStyle,
+      font: this.fontPairing,
       state: this.activeDoc,
       texts,
+      ...(Object.keys(kickers).length > 0 ? { kickers } : {}),
+      ...(Object.keys(icons).length > 0 ? { icons } : {}),
+      ...(Object.keys(aligns).length > 0 ? { aligns } : {}),
       ...(Object.keys(blocks).length > 0 ? { blocks } : {}),
       ...(Object.keys(surfaces).length > 0 ? { surfaces } : {}),
     };
@@ -308,9 +512,16 @@ export class WebStudioHost implements IBentoHost {
         h: parsed.h,
         pad: typeof parsed.pad === 'number' ? parsed.pad : 40,
         bg: typeof parsed.bg === 'string' ? parsed.bg : '#FFFFFF',
-        accent: typeof parsed.accent === 'string' ? parsed.accent : '#1B1D1E',
+        accent: typeof parsed.accent === 'string' ? parsed.accent : '#2563EB',
+        backdrop: parsed.backdrop ?? 'aurora',
+        grain: parsed.grain ?? true,
+        corners: parsed.corners ?? 'squircle',
+        font: parsed.font ?? 'swiss',
         state: validState,
         texts: parsed.texts ?? {},
+        kickers: parsed.kickers,
+        icons: parsed.icons,
+        aligns: parsed.aligns,
         blocks: parsed.blocks,
         surfaces: parsed.surfaces,
       });
@@ -332,12 +543,22 @@ export class WebStudioHost implements IBentoHost {
       canvasPadding: this.canvasPadding,
       canvasBgHex: this.canvasBgHex,
       brandAccentHex: this.brandAccentHex,
+      backdrop: this.backdrop,
+      backdropImageUrl: this.backdropImageUrl,
+      grainEnabled: this.grainEnabled,
+      cornerStyle: this.cornerStyle,
+      fontPairing: this.fontPairing,
       presetId: this.presetId,
       cards: [...this.cards],
       selectedCardIds: [...this.selectedCardIds],
       activeDoc: this.activeDoc,
       activeAnimation: this.activeAnimation,
       animationRunId: this.animationRunId,
+      savedBlueprints: [...this.savedBlueprints],
+      canUndo: this.undoStack.length > 0,
+      canRedo: this.redoStack.length > 0,
+      canSeedBack: this.seedIndex > 0,
+      canSeedForward: this.seedIndex < this.seedTrail.length - 1,
       version: this.version,
     };
   }
@@ -364,7 +585,7 @@ export class WebStudioHost implements IBentoHost {
     return this.cachedSnapshot;
   }
 
-  // --- Studio Workbench Controls ---
+  // --- Wave 1 Calm Studio Look & Craft Controls ---
 
   public setTheme(isDark: boolean): void {
     this.isDarkTheme = isDark;
@@ -372,6 +593,60 @@ export class WebStudioHost implements IBentoHost {
     if (this.activeDoc) {
       this.applyDocumentDirectly(this.activeDoc);
     }
+    this.emitChange(false);
+  }
+
+  public setBackdrop(backdrop: ArtboardBackdropId): void {
+    this.pushUndo();
+    this.backdrop = backdrop;
+    // Automatically make standard cards glass when switching onto a scenic wallpaper if they were plain solid
+    if (backdrop === 'aurora' || backdrop === 'dusk' || backdrop === 'photo') {
+      for (const card of this.cards) {
+        if (card.role !== 'hero' && (!card.surfaceTreatment || card.surfaceTreatment === 'solid')) {
+          card.surfaceTreatment = 'glass';
+        }
+      }
+    } else if (backdrop === 'paper') {
+      for (const card of this.cards) {
+        if (card.surfaceTreatment === 'glass') {
+          card.surfaceTreatment = 'solid';
+        }
+      }
+    }
+    this.persistToLocalStorage();
+    this.emitChange(false);
+  }
+
+  public setBackdropImage(dataUrl: string): void {
+    this.pushUndo();
+    this.backdropImageUrl = dataUrl;
+    this.backdrop = 'photo';
+    for (const card of this.cards) {
+      if (card.role !== 'hero' && (!card.surfaceTreatment || card.surfaceTreatment === 'solid')) {
+        card.surfaceTreatment = 'glass';
+      }
+    }
+    this.persistToLocalStorage();
+    this.emitChange(false);
+  }
+
+  public setGrainEnabled(enabled: boolean): void {
+    this.grainEnabled = enabled;
+    this.persistToLocalStorage();
+    this.emitChange(false);
+  }
+
+  public setCornerStyle(style: CornerStyle): void {
+    this.pushUndo();
+    this.cornerStyle = style;
+    this.persistToLocalStorage();
+    this.emitChange(false);
+  }
+
+  public setFontPairing(font: FontPairingId): void {
+    this.pushUndo();
+    this.fontPairing = font;
+    this.persistToLocalStorage();
     this.emitChange(false);
   }
 
@@ -383,6 +658,7 @@ export class WebStudioHost implements IBentoHost {
   }
 
   public setCanvasDimensions(width: number, height: number, padding = this.canvasPadding): void {
+    this.pushUndo();
     const nextW = Math.max(320, Math.min(3840, Math.round(width)));
     const nextH = Math.max(240, Math.min(3840, Math.round(height)));
     const nextPad = Math.max(0, Math.min(Math.floor(Math.min(nextW, nextH) * 0.2), Math.round(padding)));
@@ -407,7 +683,8 @@ export class WebStudioHost implements IBentoHost {
 
   public setBrandAccent(hex: string): void {
     if (!/^#[0-9a-fA-F]{6}$/.test(hex)) return;
-    this.brandAccentHex = hex;
+    this.pushUndo();
+    this.brandAccentHex = hex.toUpperCase();
     if (this.activeDoc) {
       this.applyDocumentDirectly(this.activeDoc);
     }
@@ -420,6 +697,167 @@ export class WebStudioHost implements IBentoHost {
     this.persistToLocalStorage();
     this.emitChange(false);
   }
+
+  // --- Direct @bento/core Layout & Seed Actions ---
+
+  private commitDocMutation(nextDoc: BentoDocumentState, recordUndo = true): void {
+    if (recordUndo) this.pushUndo();
+    this.applyDocumentDirectly(nextDoc);
+    this.emitChange(false);
+  }
+
+  public setIntent(intent: LayoutIntent): void {
+    const rect = computeArtboardContentRect(this.canvasWidth, this.canvasHeight, this.canvasPadding);
+    if (!this.activeDoc) {
+      const created = createIntentBentoDocument(rect, intent, { seed: 48219 });
+      if (created.ok) this.commitDocMutation(created.value);
+      return;
+    }
+    const def = getIntentDefinition(intent);
+    const next = regenerateWithLocks(this.activeDoc, {
+      intent,
+      count: def.recommendedParams.count,
+      gutterPt: this.activeDoc.params.gutterPt,
+      radiusPt: this.activeDoc.params.radiusPt,
+      heroBias: def.recommendedParams.heroBias,
+    });
+    if (next.ok) this.commitDocMutation(next.value);
+  }
+
+  public applyTemplate(template: BentoTemplate): void {
+    const rect = computeArtboardContentRect(this.canvasWidth, this.canvasHeight, this.canvasPadding);
+    const result = this.activeDoc
+      ? applyTemplateToDocument(this.activeDoc, template)
+      : createIntentBentoDocument(rect, template.params.intent, {
+          ...template.params,
+        });
+    if (result.ok) {
+      this.recordSeed(result.value.params.seed);
+      this.commitDocMutation(result.value);
+    }
+  }
+
+  public setBoxCount(count: number, commitUndo = true): void {
+    if (!this.activeDoc) return;
+    const res = regenerateWithLocks(this.activeDoc, { count });
+    if (res.ok) this.commitDocMutation(res.value, commitUndo);
+  }
+
+  public setGutter(gutterPt: number, commitUndo = false): void {
+    if (!this.activeDoc) return;
+    const next = updateNonStructuralParams(this.activeDoc, { gutterPt });
+    this.commitDocMutation(next, commitUndo);
+  }
+
+  public setRadius(radiusPt: number, commitUndo = false): void {
+    if (!this.activeDoc) return;
+    const next = updateNonStructuralParams(this.activeDoc, { radiusPt });
+    this.commitDocMutation(next, commitUndo);
+  }
+
+  public setHeroBias(heroBias: number, commitUndo = false): void {
+    if (!this.activeDoc) return;
+    const res = regenerateWithLocks(this.activeDoc, { heroBias });
+    if (res.ok) this.commitDocMutation(res.value, commitUndo);
+  }
+
+  public setStylePreset(stylePreset: StylePresetId): void {
+    if (!this.activeDoc) return;
+    const next = updateNonStructuralParams(this.activeDoc, {
+      stylePreset,
+      radiusPt: getPresetDefaultRadius(stylePreset),
+    });
+    this.commitDocMutation(next, true);
+  }
+
+  public setHierarchyMode(hierarchyMode: HierarchyMode): void {
+    if (!this.activeDoc) return;
+    const next = updateNonStructuralParams(this.activeDoc, { hierarchyMode });
+    this.commitDocMutation(next, true);
+  }
+
+  public mirrorLayout(direction: MirrorDirection): void {
+    if (!this.activeDoc) return;
+    const mirrored = mirrorBentoLayout(this.activeDoc, direction);
+    if (mirrored.ok) this.commitDocMutation(mirrored.value, true);
+  }
+
+  private recordSeed(seed: number): void {
+    if (this.seedTrail[this.seedIndex] === seed) return;
+    this.seedTrail = [...this.seedTrail.slice(0, this.seedIndex + 1), seed].slice(-30);
+    this.seedIndex = this.seedTrail.length - 1;
+  }
+
+  public randomizeSeed(): void {
+    if (!this.activeDoc) {
+      this.seedStarterLayout();
+      this.emitChange(true);
+      return;
+    }
+    const nextSeed = nextDeterministicSeed(this.activeDoc.params.seed);
+    const res = regenerateWithLocks(this.activeDoc, { seed: nextSeed });
+    if (res.ok) {
+      this.recordSeed(nextSeed);
+      this.commitDocMutation(res.value, true);
+    }
+  }
+
+  public prevSeed(): void {
+    if (!this.activeDoc || this.seedIndex <= 0) return;
+    this.seedIndex -= 1;
+    const seed = this.seedTrail[this.seedIndex]!;
+    const res = regenerateWithLocks(this.activeDoc, { seed });
+    if (res.ok) this.commitDocMutation(res.value, true);
+  }
+
+  public nextSeed(): void {
+    if (!this.activeDoc || this.seedIndex >= this.seedTrail.length - 1) return;
+    this.seedIndex += 1;
+    const seed = this.seedTrail[this.seedIndex]!;
+    const res = regenerateWithLocks(this.activeDoc, { seed });
+    if (res.ok) this.commitDocMutation(res.value, true);
+  }
+
+  public applySeedCode(rawCode: string): boolean {
+    if (!this.activeDoc) return false;
+    const parsed = parseSeedCode(rawCode);
+    if (!parsed) return false;
+    const res = regenerateWithLocks(this.activeDoc, { count: parsed.count, seed: parsed.seed });
+    if (!res.ok) return false;
+    this.recordSeed(parsed.seed);
+    this.commitDocMutation(res.value, true);
+    return true;
+  }
+
+  // --- Personal Saved Library ---
+
+  public saveCurrentBlueprint(name: string): SavedBentoBlueprint | null {
+    if (!this.activeDoc) return null;
+    const def = getIntentDefinition(this.activeDoc.params.intent);
+    const label = name.trim() || `${def.label} ${this.activeDoc.params.count}`;
+    const { blueprint, nextList } = saveBlueprintToLibrary(
+      this.savedBlueprints,
+      label,
+      this.activeDoc
+    );
+    this.savedBlueprints = nextList;
+    this.emitChange(false);
+    return blueprint;
+  }
+
+  public applySavedBlueprint(blueprint: SavedBentoBlueprint): void {
+    const rect = computeArtboardContentRect(this.canvasWidth, this.canvasHeight, this.canvasPadding);
+    const nextDoc = instantiateSavedBlueprint(blueprint, rect, this.activeDoc);
+    this.recordSeed(nextDoc.params.seed);
+    this.commitDocMutation(nextDoc, true);
+  }
+
+  public deleteSavedBlueprint(id: string): void {
+    this.savedBlueprints = deleteBlueprintFromLibrary(this.savedBlueprints, id);
+    this.emitChange(false);
+  }
+
+  // --- Card Selection, Content, Ergonomics & Drag-to-Swap ---
 
   public selectCards(cardIds: string[]): void {
     this.selectedCardIds = cardIds;
@@ -434,9 +872,36 @@ export class WebStudioHost implements IBentoHost {
     this.emitChange(false);
   }
 
+  public setCardKicker(cardId: string, kicker: string): void {
+    const target = this.cards.find((c) => c.id === cardId);
+    if (!target) return;
+    target.kicker = kicker;
+    this.persistToLocalStorage();
+    this.emitChange(false);
+  }
+
+  public setCardIcon(cardId: string, icon: CardIconId): void {
+    const target = this.cards.find((c) => c.id === cardId);
+    if (!target) return;
+    this.pushUndo();
+    target.icon = icon;
+    this.persistToLocalStorage();
+    this.emitChange(false);
+  }
+
+  public setCardTextAlign(cardId: string, align: CardTextAlign): void {
+    const target = this.cards.find((c) => c.id === cardId);
+    if (!target) return;
+    this.pushUndo();
+    target.textAlign = align;
+    this.persistToLocalStorage();
+    this.emitChange(false);
+  }
+
   public setCardBlockType(cardId: string, blockType: CardBlockType): void {
     const target = this.cards.find((c) => c.id === cardId);
     if (!target) return;
+    this.pushUndo();
     target.blockType = blockType;
     if (blockType === 'kpi' && target.text.trim().split(/\r?\n/).length < 2) {
       const label = target.text.trim() || 'Quarterly Growth';
@@ -452,6 +917,7 @@ export class WebStudioHost implements IBentoHost {
   public setCardSurfaceTreatment(cardId: string, treatment: CardSurfaceTreatment): void {
     const target = this.cards.find((c) => c.id === cardId);
     if (!target) return;
+    this.pushUndo();
     target.surfaceTreatment = treatment;
     this.persistToLocalStorage();
     this.emitChange(false);
@@ -460,17 +926,133 @@ export class WebStudioHost implements IBentoHost {
   public setCardImageDataUrl(cardId: string, dataUrl: string, addScrim = true): void {
     const target = this.cards.find((c) => c.id === cardId);
     if (!target) return;
+    this.pushUndo();
     target.imageDataUrl = dataUrl;
     target.hasScrim = addScrim;
     target.style = { ...target.style, textColorHex: '#FFFFFF' };
     this.emitChange(false);
   }
 
+  public clearCardImage(cardId: string): void {
+    const target = this.cards.find((c) => c.id === cardId);
+    if (!target) return;
+    this.pushUndo();
+    target.imageDataUrl = undefined;
+    target.hasScrim = false;
+    if (this.activeDoc) {
+      this.applyDocumentDirectly(this.activeDoc);
+    }
+    this.emitChange(false);
+  }
+
+  /**
+   * Drag-and-drop content swap (#17): swaps text, block type, kicker, icon, alignment,
+   * image, and surface treatment between two tiles while preserving exact grid geometry!
+   */
+  public swapCardContents(sourceCardId: string, targetCardId: string): void {
+    if (sourceCardId === targetCardId) return;
+    const a = this.cards.find((c) => c.id === sourceCardId);
+    const b = this.cards.find((c) => c.id === targetCardId);
+    if (!a || !b) return;
+
+    this.pushUndo();
+    const tmp = {
+      text: a.text,
+      kicker: a.kicker,
+      icon: a.icon,
+      textAlign: a.textAlign,
+      blockType: a.blockType,
+      surfaceTreatment: a.surfaceTreatment,
+      imageDataUrl: a.imageDataUrl,
+      hasScrim: a.hasScrim,
+    };
+
+    a.text = b.text;
+    a.kicker = b.kicker;
+    a.icon = b.icon;
+    a.textAlign = b.textAlign;
+    a.blockType = b.blockType;
+    a.surfaceTreatment = b.surfaceTreatment;
+    a.imageDataUrl = b.imageDataUrl;
+    a.hasScrim = b.hasScrim;
+
+    b.text = tmp.text;
+    b.kicker = tmp.kicker;
+    b.icon = tmp.icon;
+    b.textAlign = tmp.textAlign;
+    b.blockType = tmp.blockType;
+    b.surfaceTreatment = tmp.surfaceTreatment;
+    b.imageDataUrl = tmp.imageDataUrl;
+    b.hasScrim = tmp.hasScrim;
+
+    if (this.activeDoc) {
+      this.applyDocumentDirectly(this.activeDoc);
+    }
+    this.selectedCardIds = [b.id];
+    this.emitChange(true);
+  }
+
+  public toggleCardLock(cardId: string): void {
+    if (!this.activeDoc) return;
+    const card = this.cards.find((c) => c.id === cardId);
+    if (!card) return;
+    const next = toggleLeafLock(this.activeDoc, card.slotId);
+    this.commitDocMutation(next, true);
+  }
+
+  public toggleCardHero(cardId: string): void {
+    if (!this.activeDoc) return;
+    const card = this.cards.find((c) => c.id === cardId);
+    if (!card) return;
+    const nextRole: CellRole = card.role === 'hero' ? 'standard' : 'hero';
+    const next = setLeafRole(this.activeDoc, card.slotId, nextRole);
+    this.commitDocMutation(next, true);
+  }
+
+  public setCardShape(cardId: string, shapeKind: CellShapeKind): void {
+    if (!this.activeDoc) return;
+    const card = this.cards.find((c) => c.id === cardId);
+    if (!card) return;
+    const next = setLeafShapeKind(this.activeDoc, card.slotId, shapeKind);
+    this.commitDocMutation(next, true);
+  }
+
+  public splitCard(cardId: string, axis: SplitAxis): void {
+    if (!this.activeDoc) return;
+    const card = this.cards.find((c) => c.id === cardId);
+    if (!card) return;
+    const res = splitLeaf(this.activeDoc, card.slotId, axis);
+    if (res.ok) this.commitDocMutation(res.value, true);
+  }
+
+  public deleteCardAndReflow(cardId: string): void {
+    const card = this.cards.find((c) => c.id === cardId);
+    if (!card) return;
+    if (this.activeDoc && this.cards.length > 2) {
+      const res = deleteLeafFromTree(this.activeDoc, card.slotId);
+      if (res.ok) {
+        this.selectedCardIds = [];
+        this.commitDocMutation(res.value, true);
+        return;
+      }
+    }
+    this.deleteCardById(cardId);
+  }
+
   public deleteCardById(cardId: string): void {
+    this.pushUndo();
     this.cards = this.cards.filter((c) => c.id !== cardId);
     this.selectedCardIds = this.selectedCardIds.filter((id) => id !== cardId);
     this.persistToLocalStorage();
     this.emitChange(true);
+  }
+
+  public applyMotionPreset(preset: EntranceAnimationPreset): void {
+    if (!this.activeDoc) return;
+    const spec = buildEntranceAnimationSpec(this.activeDoc, preset, {
+      supportsCustomGeometry: true,
+    });
+    void this.applyEntranceAnimations(this.activeDoc.bentoId, spec);
   }
 
   public resizeActiveSplit(
@@ -510,10 +1092,22 @@ export class WebStudioHost implements IBentoHost {
   }
 
   public clearCanvas(): void {
+    this.pushUndo();
     this.cards = [];
     this.selectedCardIds = [];
     this.activeDoc = null;
     this.persistToLocalStorage();
+    this.emitChange(true);
+  }
+
+  public resetToStarter(): void {
+    this.pushUndo();
+    this.backdrop = 'aurora';
+    this.grainEnabled = true;
+    this.cornerStyle = 'squircle';
+    this.fontPairing = 'swiss';
+    this.brandAccentHex = '#2563EB';
+    this.seedStarterLayout();
     this.emitChange(true);
   }
 
@@ -545,7 +1139,6 @@ export class WebStudioHost implements IBentoHost {
       };
     }
 
-    // When canvas is cleared, pre-select the artboard content bounds so Entry "Create Layout" works in 1 click!
     return {
       slideId: 'studio_artboard',
       slideBounds,
@@ -559,8 +1152,6 @@ export class WebStudioHost implements IBentoHost {
 
   public async applyLayoutDiff(diff: LayoutDiffPayload): Promise<{ stashedCount: number }> {
     const bySlot = new Map(this.cards.map((c) => [c.slotId, c]));
-
-    // Hydrate latest document state from spec tags
     const firstSpec = diff.update[0] ?? diff.create[0];
     const stateTag = firstSpec?.tags[BENTO_TAGS.STATE];
     if (stateTag) {
@@ -585,10 +1176,9 @@ export class WebStudioHost implements IBentoHost {
       card.tags = { ...spec.tags };
     }
 
-    const createdIds: string[] = [];
     for (const spec of diff.create) {
       const id = `card_${this.cardSeq++}`;
-      const card: StudioCard = {
+      this.cards.push({
         id,
         slotId: spec.slotId,
         rect: { ...spec.rect },
@@ -602,10 +1192,12 @@ export class WebStudioHost implements IBentoHost {
         contentHint: spec.contentHint,
         tags: { ...spec.tags },
         text: '',
+        icon: 'none',
+        textAlign: 'tl',
+        blockType: 'text',
+        surfaceTreatment: this.backdrop !== 'paper' && spec.role !== 'hero' ? 'glass' : 'solid',
         style: { ...DEFAULT_CARD_STYLE, slotId: spec.slotId },
-      };
-      this.cards.push(card);
-      createdIds.push(id);
+      });
     }
 
     const retireSet = new Set(diff.retireSlotIds);
@@ -614,11 +1206,6 @@ export class WebStudioHost implements IBentoHost {
     }
 
     this.cards.sort((a, b) => a.zOrderIndex - b.zOrderIndex);
-
-    if (createdIds.length > 0 && diff.update.length === 0) {
-      this.selectedCardIds = [createdIds[0]!];
-    }
-
     this.persistToLocalStorage();
     this.emitChange(false);
     return { stashedCount: 0 };
@@ -631,11 +1218,7 @@ export class WebStudioHost implements IBentoHost {
     for (const card of this.cards) {
       const style = bySlot.get(card.slotId);
       if (!style) continue;
-      if (card.imageDataUrl) {
-        card.style = { ...style, textColorHex: '#FFFFFF' };
-      } else {
-        card.style = { ...style };
-      }
+      card.style = card.imageDataUrl ? { ...style, textColorHex: '#FFFFFF' } : { ...style };
     }
 
     this.persistToLocalStorage();

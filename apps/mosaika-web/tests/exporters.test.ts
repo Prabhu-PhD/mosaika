@@ -13,6 +13,10 @@ import {
 import { exportToPptxBytes } from '../src/pptxExporter.js';
 import { computeArtboardContentRect } from '../src/presets.js';
 import { WebStudioHost } from '../src/studioHost.js';
+import {
+  buildSquirclePath,
+  extractDominantBrandColorFromRgba,
+} from '../src/visualCraft.js';
 
 describe('Mosaika Web Studio — exporters & live reflow', () => {
   it('exports valid pure-vector SVG with wrapped <tspan>, XML escaping, and zero <foreignObject>', () => {
@@ -210,5 +214,61 @@ describe('Mosaika Web Studio — exporters & live reflow', () => {
     expect(decoded?.blocks?.[cards[1]!.slotId]).toBe('kpi');
     expect(decoded?.blocks?.[cards[2]!.slotId]).toBe('checklist');
     expect(decoded?.surfaces?.[cards[0]!.slotId]).toBe('mesh');
+  });
+
+  it('builds continuous Apple squircle Bezier paths and extracts dominant brand color from RGBA', () => {
+    const sq = buildSquirclePath(300, 200, 24);
+    expect(sq.startsWith('M ')).toBe(true);
+    expect(sq).toContain(' C ');
+    expect(sq.endsWith('Z')).toBe(true);
+
+    const sharp = buildSquirclePath(300, 200, 0);
+    expect(sharp).not.toContain(' C ');
+
+    // 4 pixels: transparent, near-white background, and two vivid emerald pixels (#10B981)
+    const rgba = new Uint8ClampedArray([
+      255, 0, 0, 0,
+      252, 252, 252, 255,
+      16, 185, 129, 255,
+      16, 185, 129, 255,
+    ]);
+    const extracted = extractDominantBrandColorFromRgba(rgba);
+    expect(extracted.accentHex).toBe('#10B981');
+  });
+
+  it('supports drag-to-swap card contents, full Undo/Redo, and Wave 1 glass/aurora/font exports', () => {
+    const host = new WebStudioHost({ skipDefaultSeed: false });
+    const [c1, c2] = host.getSnapshot().cards;
+    const origC1Text = c1!.text;
+    const origC2Text = c2!.text;
+
+    host.swapCardContents(c1!.id, c2!.id);
+    expect(host.getSnapshot().cards[0]!.text).toBe(origC2Text);
+    expect(host.getSnapshot().cards[1]!.text).toBe(origC1Text);
+    expect(host.getSnapshot().canUndo).toBe(true);
+
+    host.undo();
+    expect(host.getSnapshot().cards[0]!.text).toBe(origC1Text);
+    expect(host.getSnapshot().cards[1]!.text).toBe(origC2Text);
+    expect(host.getSnapshot().canRedo).toBe(true);
+
+    host.redo();
+    expect(host.getSnapshot().cards[0]!.text).toBe(origC2Text);
+
+    host.setBackdrop('aurora');
+    host.setFontPairing('editorial');
+    host.setGrainEnabled(true);
+    host.setCornerStyle('squircle');
+    host.setCardSurfaceTreatment(host.getSnapshot().cards[1]!.id, 'glass');
+
+    const snap = host.getSnapshot();
+    const svg = exportToSvg(snap);
+    expect(svg).toContain('bg-aurora-a');
+    expect(svg).toContain('mosaika-grain');
+    expect(svg).toContain('Instrument Serif');
+
+    const html = exportToHtmlTailwind(snap);
+    expect(html).toContain('backdrop-filter: blur(22px)');
+    expect(html).toContain('Instrument Serif');
   });
 });
