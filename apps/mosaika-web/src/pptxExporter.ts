@@ -1,6 +1,13 @@
 import PptxGenJS from 'pptxgenjs';
 import { parseChecklistBlock, parseKpiBlock } from './cardBlocks.js';
 import type { StudioCard, StudioSnapshot } from './studioHost.js';
+import {
+  parseChartBlock,
+  parseCodeBlock,
+  parseProofBlock,
+  parseQrBlock,
+  parseQuoteBlock,
+} from './widgets.js';
 
 function stripHash(hex: string): string {
   return hex.replace(/^#/, '').toUpperCase();
@@ -97,6 +104,83 @@ function buildTextRuns(
       });
     });
     return runs;
+  }
+
+  if (card.blockType === 'code') {
+    const code = parseCodeBlock(trimmed);
+    return [
+      {
+        text: code.title,
+        options: { bold: true, fontSize: headPt, color: fontColor, fontFace: 'Segoe UI', breakLine: true },
+      },
+      {
+        text: code.lines.map((l) => `$ ${l}`).join('\n'),
+        options: { fontSize: 10.5, color: fontColor, fontFace: 'Consolas' },
+      },
+    ];
+  }
+
+  if (card.blockType === 'quote') {
+    const q = parseQuoteBlock(trimmed);
+    const runs: PptxGenJS.TextProps[] = [
+      {
+        text: `“${q.quote}”`,
+        options: { italic: true, fontSize: headPt, color: fontColor, fontFace: 'Georgia', breakLine: Boolean(q.author) },
+      },
+    ];
+    if (q.author) {
+      runs.push({
+        text: `— ${q.author}`,
+        options: { bold: true, fontSize: 11, color: fontColor, fontFace: 'Segoe UI' },
+      });
+    }
+    return runs;
+  }
+
+  if (card.blockType === 'proof') {
+    const p = parseProofBlock(trimmed);
+    return [
+      {
+        text: `★★★★★  ${p.rating}`,
+        options: { bold: true, fontSize: 11, color: 'D97706', fontFace: 'Segoe UI', breakLine: true },
+      },
+      {
+        text: p.headline,
+        options: { bold: true, fontSize: headPt, color: fontColor, fontFace: 'Segoe UI', breakLine: true },
+      },
+      {
+        text: p.caption,
+        options: { fontSize: bodyPt, color: fontColor, fontFace: 'Segoe UI' },
+      },
+    ];
+  }
+
+  if (card.blockType === 'chart') {
+    const ch = parseChartBlock(trimmed);
+    return [
+      {
+        text: ch.delta ? `${ch.title}   ${ch.delta}` : ch.title,
+        options: { bold: true, fontSize: headPt, color: fontColor, fontFace: 'Segoe UI', breakLine: true },
+      },
+      {
+        text: `Series: ${ch.values.join(', ')}`,
+        options: { fontSize: 10.5, color: fontColor, fontFace: 'Consolas' },
+      },
+    ];
+  }
+
+  if (card.blockType === 'qr') {
+    const qr = parseQrBlock(trimmed);
+    return [
+      {
+        text: qr.caption,
+        options: { bold: true, fontSize: headPt, color: fontColor, fontFace: 'Segoe UI', breakLine: true },
+      },
+      {
+        text: qr.url,
+        options: { fontSize: 10.5, color: fontColor, fontFace: 'Consolas' },
+      },
+    ];
   }
 
   const lines = trimmed.split(/\r?\n/);

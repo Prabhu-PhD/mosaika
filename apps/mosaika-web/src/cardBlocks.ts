@@ -1,5 +1,71 @@
-export type CardBlockType = 'text' | 'kpi' | 'checklist';
+export type CardBlockType =
+  | 'text'
+  | 'kpi'
+  | 'checklist'
+  | 'chart'
+  | 'mockup'
+  | 'code'
+  | 'quote'
+  | 'proof'
+  | 'qr';
+
 export type CardSurfaceTreatment = 'solid' | 'sheen' | 'mesh' | 'glass';
+export type CardPatternKind = 'none' | 'dots' | 'hatch' | 'rings' | 'waves';
+export type ChartVariant = 'sparkline' | 'bars' | 'ring';
+export type MockupDeviceKind = 'iphone' | 'browser' | 'macbook';
+export type CardWidgetVariant = ChartVariant | MockupDeviceKind;
+
+export const CARD_BLOCK_OPTIONS: ReadonlyArray<{
+  id: CardBlockType;
+  label: string;
+  defaultText: string;
+}> = [
+  { id: 'text', label: 'Text', defaultText: 'Headline\nSupporting copy for this bento tile.' },
+  { id: 'kpi', label: 'KPI Metric', defaultText: '$4.2M\n+24% YoY\nAnnual Recurring Revenue' },
+  {
+    id: 'checklist',
+    label: 'Checklist',
+    defaultText: 'Launch Readiness\nEditable .pptx export\nVector SVG & Retina PNG\nZero-backend share link',
+  },
+  {
+    id: 'chart',
+    label: 'Live Chart',
+    defaultText: 'Weekly Velocity\n+38% MoM\n24, 38, 32, 54, 48, 76, 92',
+  },
+  {
+    id: 'mockup',
+    label: 'Device Mockup',
+    defaultText: 'Ship Faster\nDrop any screenshot onto this tile to preview inside a crisp frame.',
+  },
+  {
+    id: 'code',
+    label: 'Code / CLI',
+    defaultText: 'Quick Start\npnpm create mosaika\ncd my-grid && pnpm dev\n// Bounded Swiss grids ready.',
+  },
+  {
+    id: 'quote',
+    label: 'Pull Quote',
+    defaultText: 'Mosaika turned our chaotic slide decks into cohesive Swiss grids in seconds.\nElena Vance · Design Lead',
+  },
+  {
+    id: 'proof',
+    label: 'Social Proof',
+    defaultText: '2,400+ Designers\n4.9 / 5\nTrusted by product teams shipping weekly launches',
+  },
+  {
+    id: 'qr',
+    label: 'Live QR Code',
+    defaultText: 'https://prabhu-phd.github.io/mosaika\nScan to try Mosaika Studio',
+  },
+] as const;
+
+export const CARD_PATTERN_OPTIONS: ReadonlyArray<{ id: CardPatternKind; label: string }> = [
+  { id: 'none', label: 'None' },
+  { id: 'dots', label: 'Dots' },
+  { id: 'hatch', label: 'Hatch' },
+  { id: 'rings', label: 'Rings' },
+  { id: 'waves', label: 'Waves' },
+] as const;
 
 export interface ParsedKpiBlock {
   value: string;

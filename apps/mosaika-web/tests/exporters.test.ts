@@ -17,6 +17,11 @@ import {
   buildSquirclePath,
   extractDominantBrandColorFromRgba,
 } from '../src/visualCraft.js';
+import {
+  buildQrMatrix,
+  computeSparklineGeometry,
+  parseChartBlock,
+} from '../src/widgets.js';
 
 describe('Mosaika Web Studio — exporters & live reflow', () => {
   it('exports valid pure-vector SVG with wrapped <tspan>, XML escaping, and zero <foreignObject>', () => {
@@ -270,5 +275,49 @@ describe('Mosaika Web Studio — exporters & live reflow', () => {
     const html = exportToHtmlTailwind(snap);
     expect(html).toContain('backdrop-filter: blur(22px)');
     expect(html).toContain('Instrument Serif');
+  });
+
+  it('renders Wave 2 widgets (Chart, Code, QR, Quote, Proof, Mockup) and patterns across SVG, HTML, and .pptx', async () => {
+    const matrix = buildQrMatrix('https://prabhu-phd.github.io/mosaika');
+    expect(matrix.length).toBeGreaterThanOrEqual(21);
+    expect(matrix.length).toBe(matrix[0]!.length);
+
+    const parsedChart = parseChartBlock('Revenue\n+42%\n10, 25, 40, 85');
+    expect(parsedChart.values).toEqual([10, 25, 40, 85]);
+    const geom = computeSparklineGeometry(parsedChart.values, 200, 80);
+    expect(geom.points).toHaveLength(4);
+    expect(geom.linePath.startsWith('M ')).toBe(true);
+
+    const host = new WebStudioHost({ skipDefaultSeed: false });
+    const cards = host.getSnapshot().cards;
+    host.setCardPattern(cards[0]!.id, 'rings');
+    host.setCardBlockType(cards[1]!.id, 'chart');
+    host.setCardWidgetVariant(cards[1]!.id, 'bars');
+    host.setCardBlockType(cards[2]!.id, 'qr');
+    host.setCardBlockType(cards[3]!.id, 'code');
+    host.setCardBlockType(cards[4]!.id, 'mockup');
+    host.setCardWidgetVariant(cards[4]!.id, 'browser');
+
+    const snap = host.getSnapshot();
+    const svg = exportToSvg(snap);
+    expect(svg).toContain('<pattern id="pat-');
+    expect(svg).toContain('#0D0F14'); // Code terminal background
+    expect(svg).toContain('Scan to try Mosaika Studio');
+    expect(svg).not.toContain('<foreignObject');
+
+    const html = exportToHtmlTailwind(snap);
+    expect(html).toContain('<svg viewBox="0 0 240 72"');
+    expect(html).toContain('<pre class="mt-2 rounded-xl bg-zinc-950');
+
+    const pptxBytes = await exportToPptxBytes(snap);
+    expect(pptxBytes.byteLength).toBeGreaterThan(8_000);
+    expect(pptxBytes[0]).toBe(0x50);
+    expect(pptxBytes[1]).toBe(0x4b);
+
+    const encoded = encodeSharePayload(host.toSharePayload()!);
+    const decoded = decodeSharePayload(encoded);
+    expect(decoded?.patterns?.[cards[0]!.slotId]).toBe('rings');
+    expect(decoded?.variants?.[cards[1]!.slotId]).toBe('bars');
+    expect(decoded?.blocks?.[cards[2]!.slotId]).toBe('qr');
   });
 });

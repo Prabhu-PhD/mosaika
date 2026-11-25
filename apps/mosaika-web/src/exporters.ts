@@ -10,6 +10,17 @@ import {
   computeBackdropPalette,
   getFontPairing,
 } from './visualCraft.js';
+import {
+  buildCardPatternDefString,
+  buildQrMatrix,
+  computeSparklineGeometry,
+  parseChartBlock,
+  parseCodeBlock,
+  parseProofBlock,
+  parseQrBlock,
+  parseQuoteBlock,
+  resolveChartVariant,
+} from './widgets.js';
 
 function escapeXml(value: string): string {
   return value
@@ -246,7 +257,18 @@ export function exportToSvg(snapshot: StudioSnapshot): string {
       );
     }
 
-    if (card.imageDataUrl) {
+    if (card.pattern && card.pattern !== 'none') {
+      const patId = `pat-${card.slotId}`;
+      const patDef = buildCardPatternDefString(patId, card.pattern, card.style.textColorHex);
+      if (patDef) {
+        defs.push(patDef);
+        cardParts.push(
+          `<g clip-path="url(#${clipId})"><rect x="${card.rect.left}" y="${card.rect.top}" width="${card.rect.width}" height="${card.rect.height}" fill="url(#${patId})"/></g>`
+        );
+      }
+    }
+
+    if (card.imageDataUrl && card.blockType !== 'mockup') {
       cardParts.push(
         `<g clip-path="url(#${clipId})">` +
           `<image href="${escapeXml(card.imageDataUrl)}" x="${card.rect.left}" y="${card.rect.top}" width="${card.rect.width}" height="${card.rect.height}" preserveAspectRatio="xMidYMid slice"/>` +
@@ -309,6 +331,140 @@ export function exportToSvg(snapshot: StudioSnapshot): string {
         cardParts.push(
           `<g clip-path="url(#${clipId})">` +
             `<text x="${textX.toFixed(1)}" y="${startY.toFixed(1)}"${anchorAttr} fill="${escapeXml(card.style.textColorHex)}" font-family="Inter, -apple-system, 'Segoe UI', sans-serif">${listTspans}</text>` +
+            `</g>`
+        );
+      } else if (card.blockType === 'chart') {
+        const chart = parseChartBlock(content);
+        const variant = resolveChartVariant(card.widgetVariant);
+        const accent = card.role === 'hero' ? card.style.textColorHex : snapshot.brandAccentHex;
+        const chartLeft = card.rect.left + padLeft;
+        const chartTop = card.rect.top + padTop + fontSize + 18;
+        const chartW = Math.max(60, card.rect.width - padLeft - padRight);
+        const chartH = Math.max(44, card.rect.height - (chartTop - card.rect.top) - padBottom);
+        let chartSvg = `<text x="${chartLeft.toFixed(1)}" y="${(card.rect.top + padTop + fontSize).toFixed(1)}" fill="${escapeXml(card.style.textColorHex)}" font-size="${fontSize}" font-weight="600" font-family="${escapeXml(fontSpec.headingFamily)}">${escapeXml(chart.title)}</text>`;
+        if (variant === 'bars') {
+          const maxVal = Math.max(1, ...chart.values);
+          const peakIdx = chart.values.indexOf(maxVal);
+          const gap = 8;
+          const bw = Math.max(6, (chartW - gap * (chart.values.length - 1)) / chart.values.length);
+          chartSvg += chart.values
+            .map((val, i) => {
+              const bh = Math.max(6, (val / maxVal) * chartH);
+              const bx = chartLeft + i * (bw + gap);
+              const by = chartTop + chartH - bh;
+              return `<rect x="${bx.toFixed(1)}" y="${by.toFixed(1)}" width="${bw.toFixed(1)}" height="${bh.toFixed(1)}" rx="4" fill="${i === peakIdx ? escapeXml(accent) : escapeXml(card.style.textColorHex)}" fill-opacity="${i === peakIdx ? '0.95' : '0.22'}"/>`;
+            })
+            .join('');
+        } else if (variant === 'ring') {
+          const pct = Math.max(0, Math.min(100, chart.values[chart.values.length - 1] ?? 78));
+          const r = Math.min(chartW, chartH) * 0.42;
+          const cx = card.rect.left + card.rect.width / 2;
+          const cy = chartTop + chartH / 2;
+          const circ = 2 * Math.PI * r;
+          chartSvg +=
+            `<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="${r.toFixed(1)}" fill="none" stroke="${escapeXml(card.style.textColorHex)}" stroke-opacity="0.15" stroke-width="8"/>` +
+            `<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="${r.toFixed(1)}" fill="none" stroke="${escapeXml(accent)}" stroke-width="8" stroke-linecap="round" stroke-dasharray="${circ.toFixed(1)}" stroke-dashoffset="${(circ * (1 - pct / 100)).toFixed(1)}" transform="rotate(-90 ${cx.toFixed(1)} ${cy.toFixed(1)})"/>` +
+            `<text x="${cx.toFixed(1)}" y="${(cy + 7).toFixed(1)}" text-anchor="middle" fill="${escapeXml(card.style.textColorHex)}" font-size="18" font-weight="700" font-family="Inter, sans-serif">${Math.round(pct)}%</text>`;
+        } else {
+          const { linePath, areaPath, points } = computeSparklineGeometry(chart.values, chartW, chartH);
+          const last = points[points.length - 1]!;
+          chartSvg +=
+            `<g transform="translate(${chartLeft.toFixed(1)} ${chartTop.toFixed(1)})">` +
+            `<path d="${areaPath}" fill="${escapeXml(accent)}" fill-opacity="0.16"/>` +
+            `<path d="${linePath}" fill="none" stroke="${escapeXml(accent)}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>` +
+            `<circle cx="${last.x}" cy="${last.y}" r="4.5" fill="${escapeXml(accent)}" stroke="#FFFFFF" stroke-width="2"/>` +
+            `</g>`;
+        }
+        cardParts.push(`<g clip-path="url(#${clipId})">${chartSvg}</g>`);
+      } else if (card.blockType === 'code') {
+        const code = parseCodeBlock(content);
+        const boxX = card.rect.left + padLeft;
+        const boxY = card.rect.top + padTop + fontSize + 12;
+        const boxW = Math.max(60, card.rect.width - padLeft - padRight);
+        const boxH = Math.max(48, card.rect.height - (boxY - card.rect.top) - padBottom);
+        const codeLines = code.lines
+          .slice(0, 6)
+          .map(
+            (ln, i) =>
+              `<tspan x="${(boxX + 14).toFixed(1)}" dy="${i === 0 ? 0 : 18}">$ ${escapeXml(ln)}</tspan>`
+          )
+          .join('');
+        cardParts.push(
+          `<g clip-path="url(#${clipId})">` +
+            `<text x="${boxX.toFixed(1)}" y="${(card.rect.top + padTop + fontSize).toFixed(1)}" fill="${escapeXml(card.style.textColorHex)}" font-size="${fontSize}" font-weight="600" font-family="${escapeXml(fontSpec.headingFamily)}">${escapeXml(code.title)}</text>` +
+            `<rect x="${boxX.toFixed(1)}" y="${boxY.toFixed(1)}" width="${boxW.toFixed(1)}" height="${boxH.toFixed(1)}" rx="10" fill="#0D0F14"/>` +
+            `<circle cx="${(boxX + 14).toFixed(1)}" cy="${(boxY + 13).toFixed(1)}" r="3.5" fill="#FB7185"/>` +
+            `<circle cx="${(boxX + 25).toFixed(1)}" cy="${(boxY + 13).toFixed(1)}" r="3.5" fill="#FBBF24"/>` +
+            `<circle cx="${(boxX + 36).toFixed(1)}" cy="${(boxY + 13).toFixed(1)}" r="3.5" fill="#34D399"/>` +
+            `<text x="${(boxX + 14).toFixed(1)}" y="${(boxY + 38).toFixed(1)}" fill="#E4E4E7" font-size="12" font-family="JetBrains Mono, monospace">${codeLines}</text>` +
+            `</g>`
+        );
+      } else if (card.blockType === 'qr') {
+        const qr = parseQrBlock(content);
+        const matrix = buildQrMatrix(qr.url);
+        const n = matrix.length;
+        const qrBox = Math.max(64, Math.min(130, Math.round(Math.min(card.rect.width, card.rect.height) * 0.48)));
+        const qrX = card.rect.left + padLeft;
+        const qrY = card.rect.top + (card.rect.height - qrBox) / 2;
+        const cellSz = (qrBox - 16) / n;
+        const rects: string[] = [];
+        for (let r = 0; r < n; r++) {
+          for (let c = 0; c < n; c++) {
+            if (matrix[r]![c]) {
+              rects.push(
+                `<rect x="${(qrX + 8 + c * cellSz).toFixed(2)}" y="${(qrY + 8 + r * cellSz).toFixed(2)}" width="${(cellSz + 0.1).toFixed(2)}" height="${(cellSz + 0.1).toFixed(2)}" fill="#111216"/>`
+              );
+            }
+          }
+        }
+        cardParts.push(
+          `<g clip-path="url(#${clipId})">` +
+            `<rect x="${qrX.toFixed(1)}" y="${qrY.toFixed(1)}" width="${qrBox}" height="${qrBox}" rx="10" fill="#FFFFFF"/>` +
+            rects.join('') +
+            `<text x="${(qrX + qrBox + 18).toFixed(1)}" y="${(qrY + qrBox / 2).toFixed(1)}" fill="${escapeXml(card.style.textColorHex)}" font-size="${Math.max(14, Math.round(fontSize * 0.85))}" font-weight="600" font-family="${escapeXml(fontSpec.headingFamily)}">${escapeXml(qr.caption)}</text>` +
+            `</g>`
+        );
+      } else if (card.blockType === 'quote') {
+        const q = parseQuoteBlock(content);
+        const qLines = wrapTextLines(`“${q.quote}”`, Math.max(12, maxChars), Math.max(2, maxLines - 1));
+        const qTspans = [
+          ...qLines.map(
+            (l, i) =>
+              `<tspan x="${textX.toFixed(1)}" dy="${i === 0 ? 0 : Math.round(fontSize * 1.35)}" font-size="${fontSize}" font-style="italic">${escapeXml(l)}</tspan>`
+          ),
+          q.author
+            ? `<tspan x="${textX.toFixed(1)}" dy="${Math.round(fontSize * 1.6)}" font-size="${Math.max(12, Math.round(fontSize * 0.6))}" font-weight="600" opacity="0.72">— ${escapeXml(q.author)}</tspan>`
+            : '',
+        ].join('');
+        cardParts.push(
+          `<g clip-path="url(#${clipId})">` +
+            `<text x="${textX.toFixed(1)}" y="${(card.rect.top + padTop + fontSize).toFixed(1)}" fill="${escapeXml(card.style.textColorHex)}" font-family="Instrument Serif, Georgia, serif">${qTspans}</text>` +
+            `</g>`
+        );
+      } else if (card.blockType === 'proof') {
+        const proof = parseProofBlock(content);
+        cardParts.push(
+          `<g clip-path="url(#${clipId})">` +
+            `<text x="${textX.toFixed(1)}" y="${(card.rect.top + padTop + 18).toFixed(1)}" fill="#F59E0B" font-size="15">★★★★★</text>` +
+            `<text x="${(textX + 92).toFixed(1)}" y="${(card.rect.top + padTop + 18).toFixed(1)}" fill="${escapeXml(card.style.textColorHex)}" font-size="13" font-weight="600">${escapeXml(proof.rating)}</text>` +
+            `<text x="${textX.toFixed(1)}" y="${(card.rect.top + padTop + 56).toFixed(1)}" fill="${escapeXml(card.style.textColorHex)}" font-size="${fontSize}" font-weight="600" font-family="${escapeXml(fontSpec.headingFamily)}">${escapeXml(proof.headline)}</text>` +
+            `<text x="${textX.toFixed(1)}" y="${(card.rect.top + padTop + 80).toFixed(1)}" fill="${escapeXml(card.style.textColorHex)}" font-size="13" opacity="0.78" font-family="Inter, sans-serif">${escapeXml(proof.caption)}</text>` +
+            `</g>`
+        );
+      } else if (card.blockType === 'mockup') {
+        const mLines = content.split(/\r?\n/);
+        const devW = Math.min(card.rect.width * 0.72, 260);
+        const devH = Math.max(80, card.rect.height * 0.56);
+        const devX = card.rect.left + (card.rect.width - devW) / 2;
+        const devY = card.rect.top + card.rect.height - devH + 16;
+        cardParts.push(
+          `<g clip-path="url(#${clipId})">` +
+            `<text x="${textX.toFixed(1)}" y="${(card.rect.top + padTop + fontSize).toFixed(1)}" fill="${escapeXml(card.style.textColorHex)}" font-size="${fontSize}" font-weight="600" font-family="${escapeXml(fontSpec.headingFamily)}">${escapeXml(mLines[0] ?? 'Product Preview')}</text>` +
+            `<rect x="${devX.toFixed(1)}" y="${devY.toFixed(1)}" width="${devW.toFixed(1)}" height="${devH.toFixed(1)}" rx="22" fill="#18181B" stroke="rgba(255,255,255,0.22)" stroke-width="1.5"/>` +
+            `<rect x="${(devX + 7).toFixed(1)}" y="${(devY + 18).toFixed(1)}" width="${(devW - 14).toFixed(1)}" height="${(devH - 18).toFixed(1)}" rx="15" fill="#FFFFFF"/>` +
+            (card.imageDataUrl
+              ? `<image href="${escapeXml(card.imageDataUrl)}" x="${(devX + 7).toFixed(1)}" y="${(devY + 18).toFixed(1)}" width="${(devW - 14).toFixed(1)}" height="${(devH - 18).toFixed(1)}" preserveAspectRatio="xMidYMin slice"/>`
+              : '') +
             `</g>`
         );
       } else {
@@ -435,6 +591,46 @@ export function exportToHtmlTailwind(snapshot: StudioSnapshot): string {
         `    <ul class="mt-2 space-y-1 text-xs opacity-85">`,
         ...list.items.map((item) => `      <li>✓ ${escapeXml(item)}</li>`),
         `    </ul>`,
+      ].filter((v): v is string => Boolean(v));
+    } else if (card.blockType === 'chart') {
+      const chart = parseChartBlock(card.text.trim());
+      const { linePath } = computeSparklineGeometry(chart.values, 240, 72);
+      innerHtml = [
+        kickerLine,
+        `    <div class="flex items-baseline justify-between gap-2">`,
+        `      <h3 class="text-sm font-semibold">${escapeXml(chart.title)}</h3>`,
+        chart.delta ? `      <span class="text-xs font-semibold opacity-75">${escapeXml(chart.delta)}</span>` : null,
+        `    </div>`,
+        `    <svg viewBox="0 0 240 72" class="w-full mt-3"><path d="${linePath}" fill="none" stroke="${snapshot.brandAccentHex}" stroke-width="3" stroke-linecap="round"/></svg>`,
+      ].filter((v): v is string => Boolean(v));
+    } else if (card.blockType === 'code') {
+      const code = parseCodeBlock(card.text.trim());
+      innerHtml = [
+        kickerLine,
+        `    <h3 class="text-sm font-semibold">${escapeXml(code.title)}</h3>`,
+        `    <pre class="mt-2 rounded-xl bg-zinc-950 text-zinc-100 p-3 text-xs font-mono overflow-x-auto"><code>${escapeXml(code.lines.join('\n'))}</code></pre>`,
+      ].filter((v): v is string => Boolean(v));
+    } else if (card.blockType === 'quote') {
+      const q = parseQuoteBlock(card.text.trim());
+      innerHtml = [
+        kickerLine,
+        `    <blockquote class="text-lg italic leading-snug">“${escapeXml(q.quote)}”</blockquote>`,
+        q.author ? `    <p class="mt-2 text-xs font-semibold opacity-70">— ${escapeXml(q.author)}</p>` : null,
+      ].filter((v): v is string => Boolean(v));
+    } else if (card.blockType === 'proof') {
+      const proof = parseProofBlock(card.text.trim());
+      innerHtml = [
+        kickerLine,
+        `    <div class="text-amber-500 text-xs font-semibold">★★★★★ <span class="opacity-80 text-current">${escapeXml(proof.rating)}</span></div>`,
+        `    <h3 class="mt-2 text-base font-semibold">${escapeXml(proof.headline)}</h3>`,
+        `    <p class="mt-1 text-xs opacity-75">${escapeXml(proof.caption)}</p>`,
+      ].filter((v): v is string => Boolean(v));
+    } else if (card.blockType === 'qr') {
+      const qr = parseQrBlock(card.text.trim());
+      innerHtml = [
+        kickerLine,
+        `    <h3 class="text-sm font-semibold">${escapeXml(qr.caption)}</h3>`,
+        `    <p class="mt-1 text-xs font-mono opacity-70">${escapeXml(qr.url)}</p>`,
       ].filter((v): v is string => Boolean(v));
     } else {
       const lines = (card.text.trim() || card.contentHint || card.shapeName).split(/\r?\n/);

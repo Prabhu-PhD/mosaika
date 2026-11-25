@@ -50,7 +50,13 @@ import {
   loadSavedBlueprints,
   saveBlueprintToLibrary,
 } from '@bento/ui';
-import type { CardBlockType, CardSurfaceTreatment } from './cardBlocks.js';
+import {
+  CARD_BLOCK_OPTIONS,
+  type CardBlockType,
+  type CardPatternKind,
+  type CardSurfaceTreatment,
+  type CardWidgetVariant,
+} from './cardBlocks.js';
 import { CANVAS_PRESETS, computeArtboardContentRect } from './presets.js';
 import type {
   ArtboardBackdropId,
@@ -78,6 +84,8 @@ export interface StudioCard {
   icon?: CardIconId;
   textAlign?: CardTextAlign;
   blockType?: CardBlockType;
+  widgetVariant?: CardWidgetVariant;
+  pattern?: CardPatternKind;
   surfaceTreatment?: CardSurfaceTreatment;
   imageDataUrl?: string;
   hasScrim?: boolean;
@@ -125,6 +133,8 @@ export interface ShareableStudioPayload {
   icons?: Record<string, CardIconId>;
   aligns?: Record<string, CardTextAlign>;
   blocks?: Record<string, CardBlockType>;
+  variants?: Record<string, CardWidgetVariant>;
+  patterns?: Record<string, CardPatternKind>;
   surfaces?: Record<string, CardSurfaceTreatment>;
 }
 
@@ -303,12 +313,14 @@ export class WebStudioHost implements IBentoHost {
         slot_01: 'Mosaika Studio\nDesign bounded Swiss bento grids for web, social & PowerPoint.',
         slot_02: '144\n+12 Intents\nCurated Blueprints',
         slot_03: 'Export Anywhere\nEditable .pptx slides\nVector SVG & 2× PNG\nResponsive Tailwind',
-        slot_04: 'Live Reflow\nSwitch 1440×900 to 1080×1080 effortlessly.',
-        slot_05: 'Glass & Motion\nAurora backdrops, squircles & staggered entrances.',
+        slot_04: 'Weekly Velocity\n+38% MoM\n24, 38, 32, 54, 48, 76, 92',
+        slot_05: 'Quick Start\npnpm create mosaika\ncd my-grid && pnpm dev',
       },
       {
         slot_02: 'kpi',
         slot_03: 'checklist',
+        slot_04: 'chart',
+        slot_05: 'code',
       },
       {
         slot_01: 'mesh',
@@ -319,16 +331,22 @@ export class WebStudioHost implements IBentoHost {
       },
       {
         slot_01: 'STUDIO 2.0',
-        slot_04: 'ADAPTIVE',
-        slot_05: 'CRAFT',
+        slot_04: 'LIVE DATA',
+        slot_05: 'DEV READY',
       },
       {
         slot_01: 'sparkles',
-        slot_04: 'layers',
-        slot_05: 'zap',
+        slot_04: 'trending',
+        slot_05: 'command',
       },
       {
         slot_01: 'bl',
+      },
+      {
+        slot_04: 'sparkline',
+      },
+      {
+        slot_01: 'rings',
       }
     );
     // Start cleanly in Canvas mode so first-time users see the calm Canvas controls!
@@ -342,7 +360,9 @@ export class WebStudioHost implements IBentoHost {
     initialSurfaces?: Record<string, CardSurfaceTreatment>,
     initialKickers?: Record<string, string>,
     initialIcons?: Record<string, CardIconId>,
-    initialAligns?: Record<string, CardTextAlign>
+    initialAligns?: Record<string, CardTextAlign>,
+    initialVariants?: Record<string, CardWidgetVariant>,
+    initialPatterns?: Record<string, CardPatternKind>
   ): void {
     this.activeDoc = doc;
     const specs = buildCellRenderSpecs(doc, { supportsCustomGeometry: true });
@@ -377,6 +397,8 @@ export class WebStudioHost implements IBentoHost {
         icon: initialIcons?.[spec.slotId] ?? prev?.icon ?? 'none',
         textAlign: initialAligns?.[spec.slotId] ?? prev?.textAlign ?? 'tl',
         blockType: initialBlocks?.[spec.slotId] ?? prev?.blockType ?? 'text',
+        widgetVariant: initialVariants?.[spec.slotId] ?? prev?.widgetVariant,
+        pattern: initialPatterns?.[spec.slotId] ?? prev?.pattern ?? 'none',
         surfaceTreatment:
           initialSurfaces?.[spec.slotId] ??
           prev?.surfaceTreatment ??
@@ -437,7 +459,9 @@ export class WebStudioHost implements IBentoHost {
       payload.surfaces,
       payload.kickers,
       payload.icons,
-      payload.aligns
+      payload.aligns,
+      payload.variants,
+      payload.patterns
     );
     this.emitChange(true);
   }
@@ -449,6 +473,8 @@ export class WebStudioHost implements IBentoHost {
     const icons: Record<string, CardIconId> = {};
     const aligns: Record<string, CardTextAlign> = {};
     const blocks: Record<string, CardBlockType> = {};
+    const variants: Record<string, CardWidgetVariant> = {};
+    const patterns: Record<string, CardPatternKind> = {};
     const surfaces: Record<string, CardSurfaceTreatment> = {};
 
     for (const card of this.cards) {
@@ -457,6 +483,8 @@ export class WebStudioHost implements IBentoHost {
       if (card.icon && card.icon !== 'none') icons[card.slotId] = card.icon;
       if (card.textAlign && card.textAlign !== 'tl') aligns[card.slotId] = card.textAlign;
       if (card.blockType && card.blockType !== 'text') blocks[card.slotId] = card.blockType;
+      if (card.widgetVariant) variants[card.slotId] = card.widgetVariant;
+      if (card.pattern && card.pattern !== 'none') patterns[card.slotId] = card.pattern;
       if (card.surfaceTreatment && card.surfaceTreatment !== 'solid') {
         surfaces[card.slotId] = card.surfaceTreatment;
       }
@@ -478,6 +506,8 @@ export class WebStudioHost implements IBentoHost {
       ...(Object.keys(icons).length > 0 ? { icons } : {}),
       ...(Object.keys(aligns).length > 0 ? { aligns } : {}),
       ...(Object.keys(blocks).length > 0 ? { blocks } : {}),
+      ...(Object.keys(variants).length > 0 ? { variants } : {}),
+      ...(Object.keys(patterns).length > 0 ? { patterns } : {}),
       ...(Object.keys(surfaces).length > 0 ? { surfaces } : {}),
     };
   }
@@ -523,6 +553,8 @@ export class WebStudioHost implements IBentoHost {
         icons: parsed.icons,
         aligns: parsed.aligns,
         blocks: parsed.blocks,
+        variants: parsed.variants,
+        patterns: parsed.patterns,
         surfaces: parsed.surfaces,
       });
       return true;
@@ -902,14 +934,60 @@ export class WebStudioHost implements IBentoHost {
     const target = this.cards.find((c) => c.id === cardId);
     if (!target) return;
     this.pushUndo();
+    const prevType = target.blockType ?? 'text';
     target.blockType = blockType;
-    if (blockType === 'kpi' && target.text.trim().split(/\r?\n/).length < 2) {
-      const label = target.text.trim() || 'Quarterly Growth';
-      target.text = `$4.2M\n+24% YoY\n${label}`;
-    } else if (blockType === 'checklist' && target.text.trim().split(/\r?\n/).length < 2) {
-      const title = target.text.trim() || 'Key Highlights';
-      target.text = `${title}\nEditable .pptx export\nVector SVG & Retina PNG\nZero-backend share link`;
+
+    // Seed clean sample content when switching to a specialized widget type
+    if (prevType !== blockType) {
+      const def = CARD_BLOCK_OPTIONS.find((o) => o.id === blockType);
+      if (
+        def &&
+        (blockType === 'chart' ||
+          blockType === 'code' ||
+          blockType === 'quote' ||
+          blockType === 'proof' ||
+          blockType === 'qr' ||
+          blockType === 'kpi' ||
+          blockType === 'checklist' ||
+          !target.text.trim())
+      ) {
+        if (blockType === 'kpi' && target.text.trim() && target.text.trim().split(/\r?\n/).length < 2) {
+          target.text = `$4.2M\n+24% YoY\n${target.text.trim()}`;
+        } else if (blockType === 'checklist' && target.text.trim() && target.text.trim().split(/\r?\n/).length < 2) {
+          target.text = `${target.text.trim()}\nEditable .pptx export\nVector SVG & Retina PNG\nZero-backend share link`;
+        } else if (blockType !== 'text' && blockType !== 'mockup') {
+          target.text = def.defaultText;
+        } else if (!target.text.trim()) {
+          target.text = def.defaultText;
+        }
+      }
+      if (blockType === 'chart') {
+        target.widgetVariant = 'sparkline';
+      } else if (blockType === 'mockup') {
+        target.widgetVariant = 'iphone';
+      } else {
+        target.widgetVariant = undefined;
+      }
     }
+
+    this.persistToLocalStorage();
+    this.emitChange(false);
+  }
+
+  public setCardWidgetVariant(cardId: string, variant: CardWidgetVariant): void {
+    const target = this.cards.find((c) => c.id === cardId);
+    if (!target) return;
+    this.pushUndo();
+    target.widgetVariant = variant;
+    this.persistToLocalStorage();
+    this.emitChange(false);
+  }
+
+  public setCardPattern(cardId: string, pattern: CardPatternKind): void {
+    const target = this.cards.find((c) => c.id === cardId);
+    if (!target) return;
+    this.pushUndo();
+    target.pattern = pattern;
     this.persistToLocalStorage();
     this.emitChange(false);
   }
@@ -962,6 +1040,8 @@ export class WebStudioHost implements IBentoHost {
       icon: a.icon,
       textAlign: a.textAlign,
       blockType: a.blockType,
+      widgetVariant: a.widgetVariant,
+      pattern: a.pattern,
       surfaceTreatment: a.surfaceTreatment,
       imageDataUrl: a.imageDataUrl,
       hasScrim: a.hasScrim,
@@ -972,6 +1052,8 @@ export class WebStudioHost implements IBentoHost {
     a.icon = b.icon;
     a.textAlign = b.textAlign;
     a.blockType = b.blockType;
+    a.widgetVariant = b.widgetVariant;
+    a.pattern = b.pattern;
     a.surfaceTreatment = b.surfaceTreatment;
     a.imageDataUrl = b.imageDataUrl;
     a.hasScrim = b.hasScrim;
@@ -981,6 +1063,8 @@ export class WebStudioHost implements IBentoHost {
     b.icon = tmp.icon;
     b.textAlign = tmp.textAlign;
     b.blockType = tmp.blockType;
+    b.widgetVariant = tmp.widgetVariant;
+    b.pattern = tmp.pattern;
     b.surfaceTreatment = tmp.surfaceTreatment;
     b.imageDataUrl = tmp.imageDataUrl;
     b.hasScrim = tmp.hasScrim;

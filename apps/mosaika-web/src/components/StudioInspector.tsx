@@ -31,7 +31,15 @@ import {
   Upload,
   X,
 } from 'lucide-react';
-import type { CardBlockType, CardSurfaceTreatment } from '../cardBlocks.js';
+import {
+  CARD_BLOCK_OPTIONS,
+  CARD_PATTERN_OPTIONS,
+  type CardBlockType,
+  type CardPatternKind,
+  type CardSurfaceTreatment,
+  type ChartVariant,
+  type MockupDeviceKind,
+} from '../cardBlocks.js';
 import { BRAND_ACCENT_SWATCHES } from '../presets.js';
 import type { StudioCard, StudioSnapshot, WebStudioHost } from '../studioHost.js';
 import {
@@ -618,34 +626,93 @@ export function StudioInspector({
                 Content
               </h3>
 
-              {/* Block Type */}
-              <div className="grid grid-cols-3 gap-1 p-1 rounded-lg" style={{ backgroundColor: well }}>
-                {(
-                  [
-                    ['text', 'Text'],
-                    ['kpi', 'KPI'],
-                    ['checklist', 'Checklist'],
-                  ] as ReadonlyArray<[CardBlockType, string]>
-                ).map(([bt, label]) => {
-                  const active = (selectedCard.blockType ?? 'text') === bt;
-                  return (
-                    <button
-                      key={bt}
-                      type="button"
-                      data-testid={`card-block-${bt}`}
-                      onClick={() => host.setCardBlockType(selectedCard.id, bt)}
-                      className="py-1.5 rounded-md text-[11.5px] font-medium transition-all cursor-pointer"
-                      style={{
-                        backgroundColor: active ? bg : 'transparent',
-                        color: active ? fg : muted,
-                        boxShadow: active ? '0 1px 2px rgba(0,0,0,0.06)' : 'none',
-                      }}
-                    >
-                      {label}
-                    </button>
-                  );
-                })}
+              {/* Clean Block Type Selector (9 Pro Bento Widgets — zero toolbar clutter) */}
+              <div className="space-y-1.5">
+                <label htmlFor="card-block-select" className="text-[11.5px] font-medium" style={{ color: muted }}>
+                  Widget Type
+                </label>
+                <select
+                  id="card-block-select"
+                  data-testid="card-block-select"
+                  value={selectedCard.blockType ?? 'text'}
+                  onChange={(e) =>
+                    host.setCardBlockType(selectedCard.id, e.target.value as CardBlockType)
+                  }
+                  className="w-full h-9 px-2.5 rounded-lg text-[12.5px] font-medium outline-none cursor-pointer"
+                  style={{
+                    backgroundColor: well,
+                    color: fg,
+                    border: `1px solid ${border}`,
+                  }}
+                >
+                  {CARD_BLOCK_OPTIONS.map((opt) => (
+                    <option key={opt.id} value={opt.id}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
               </div>
+
+              {/* Contextual Sub-Variant (ONLY appears for Chart or Device Mockup!) */}
+              {selectedCard.blockType === 'chart' && (
+                <div className="grid grid-cols-3 gap-1 p-1 rounded-lg" style={{ backgroundColor: well }}>
+                  {(
+                    [
+                      ['sparkline', 'Sparkline'],
+                      ['bars', 'Bars'],
+                      ['ring', 'Ring'],
+                    ] as ReadonlyArray<[ChartVariant, string]>
+                  ).map(([v, label]) => {
+                    const active = (selectedCard.widgetVariant ?? 'sparkline') === v;
+                    return (
+                      <button
+                        key={v}
+                        type="button"
+                        data-testid={`chart-variant-${v}`}
+                        onClick={() => host.setCardWidgetVariant(selectedCard.id, v)}
+                        className="py-1.5 rounded-md text-[11px] font-medium cursor-pointer"
+                        style={{
+                          backgroundColor: active ? bg : 'transparent',
+                          color: active ? fg : muted,
+                          boxShadow: active ? '0 1px 2px rgba(0,0,0,0.06)' : 'none',
+                        }}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              {selectedCard.blockType === 'mockup' && (
+                <div className="grid grid-cols-3 gap-1 p-1 rounded-lg" style={{ backgroundColor: well }}>
+                  {(
+                    [
+                      ['iphone', 'iPhone'],
+                      ['browser', 'Browser'],
+                      ['macbook', 'MacBook'],
+                    ] as ReadonlyArray<[MockupDeviceKind, string]>
+                  ).map(([v, label]) => {
+                    const active = (selectedCard.widgetVariant ?? 'iphone') === v;
+                    return (
+                      <button
+                        key={v}
+                        type="button"
+                        data-testid={`mockup-device-${v}`}
+                        onClick={() => host.setCardWidgetVariant(selectedCard.id, v)}
+                        className="py-1.5 rounded-md text-[11px] font-medium cursor-pointer"
+                        style={{
+                          backgroundColor: active ? bg : 'transparent',
+                          color: active ? fg : muted,
+                          boxShadow: active ? '0 1px 2px rgba(0,0,0,0.06)' : 'none',
+                        }}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
 
               {/* Eyebrow Kicker */}
               <div className="space-y-1">
@@ -767,6 +834,34 @@ export function StudioInspector({
                     </button>
                   );
                 })}
+              </div>
+
+              {/* Procedural Card Pattern (#9) */}
+              <div className="space-y-1.5">
+                <span className="text-[11.5px] font-medium" style={{ color: muted }}>
+                  Texture Pattern
+                </span>
+                <div className="grid grid-cols-5 gap-1 p-1 rounded-lg" style={{ backgroundColor: well }}>
+                  {CARD_PATTERN_OPTIONS.map((opt) => {
+                    const active = (selectedCard.pattern ?? 'none') === opt.id;
+                    return (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        data-testid={`card-pattern-${opt.id}`}
+                        onClick={() => host.setCardPattern(selectedCard.id, opt.id as CardPatternKind)}
+                        className="py-1.5 rounded-md text-[10.5px] font-medium cursor-pointer"
+                        style={{
+                          backgroundColor: active ? bg : 'transparent',
+                          color: active ? fg : muted,
+                          boxShadow: active ? '0 1px 2px rgba(0,0,0,0.06)' : 'none',
+                        }}
+                      >
+                        {opt.label}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
 
               {/* Shape Kind */}

@@ -6,11 +6,7 @@ import {
   type ResolvedSplitHandle,
 } from '@bento/core';
 import { GripVertical, Lock } from 'lucide-react';
-import {
-  computeGradientStops,
-  parseChecklistBlock,
-  parseKpiBlock,
-} from '../cardBlocks.js';
+import { computeGradientStops } from '../cardBlocks.js';
 import type { StudioCard, StudioSnapshot } from '../studioHost.js';
 import {
   buildSquirclePath,
@@ -18,6 +14,7 @@ import {
   getFontPairing,
 } from '../visualCraft.js';
 import { CardIcon } from './CardIcon.js';
+import { CardWidgetContent } from './CardWidgetContent.js';
 
 export interface StudioCanvasProps {
   snapshot: StudioSnapshot;
@@ -444,6 +441,33 @@ export function StudioCanvas({
                       <stop offset="100%" stopColor={stops.glowHex} stopOpacity="0" />
                     </radialGradient>
                   )}
+                  {card.pattern === 'dots' && (
+                    <pattern id={`studio-pat-${card.id}`} width="16" height="16" patternUnits="userSpaceOnUse">
+                      <circle cx="8" cy="8" r="1.2" fill={card.style.textColorHex} fillOpacity="0.14" />
+                    </pattern>
+                  )}
+                  {card.pattern === 'hatch' && (
+                    <pattern
+                      id={`studio-pat-${card.id}`}
+                      width="12"
+                      height="12"
+                      patternUnits="userSpaceOnUse"
+                      patternTransform="rotate(45)"
+                    >
+                      <line x1="0" y1="0" x2="0" y2="12" stroke={card.style.textColorHex} strokeOpacity="0.10" strokeWidth="1.2" />
+                    </pattern>
+                  )}
+                  {card.pattern === 'rings' && (
+                    <pattern id={`studio-pat-${card.id}`} width="56" height="56" patternUnits="userSpaceOnUse">
+                      <circle cx="28" cy="28" r="10" fill="none" stroke={card.style.textColorHex} strokeOpacity="0.10" strokeWidth="1" />
+                      <circle cx="28" cy="28" r="22" fill="none" stroke={card.style.textColorHex} strokeOpacity="0.07" strokeWidth="1" />
+                    </pattern>
+                  )}
+                  {card.pattern === 'waves' && (
+                    <pattern id={`studio-pat-${card.id}`} width="40" height="20" patternUnits="userSpaceOnUse">
+                      <path d="M 0 10 Q 10 2 20 10 T 40 10" fill="none" stroke={card.style.textColorHex} strokeOpacity="0.10" strokeWidth="1.2" />
+                    </pattern>
+                  )}
                 </g>
               );
             })}
@@ -499,7 +523,8 @@ export function StudioCanvas({
             const isHovered = hoveredCardId === card.id;
             const isEditing = editingCardId === card.id;
             const isDropTarget = dragOverCardId === card.id;
-            const isGlass = card.surfaceTreatment === 'glass' && !card.imageDataUrl;
+            const isMockup = card.blockType === 'mockup';
+            const isGlass = card.surfaceTreatment === 'glass' && (!card.imageDataUrl || isMockup);
             const rx = card.cornerAdjustment * Math.min(card.rect.width, card.rect.height);
 
             const useSquircle =
@@ -553,9 +578,6 @@ export function StudioCanvas({
             const safePad = computeNotchSafePadding(card, snapshot.cards, basePadX, basePadY);
             const isCircle = card.shapeKind === 'circle';
             const align = isCircle ? 'center' : (card.textAlign ?? 'tl');
-            const lines = card.text.split(/\r?\n/);
-            const firstLine = lines[0] ?? '';
-            const restLines = lines.slice(1).join('\n');
 
             const alignClasses =
               align === 'center'
@@ -652,8 +674,21 @@ export function StudioCanvas({
                   </g>
                 )}
 
-                {/* Clipped Photo & Scrim */}
-                {card.imageDataUrl && (
+                {/* Optional Procedural Card Texture Pattern (#9) */}
+                {card.pattern && card.pattern !== 'none' && (
+                  <g clipPath={`url(#studio-clip-${card.id})`} pointerEvents="none">
+                    <rect
+                      x={card.rect.left}
+                      y={card.rect.top}
+                      width={card.rect.width}
+                      height={card.rect.height}
+                      fill={`url(#studio-pat-${card.id})`}
+                    />
+                  </g>
+                )}
+
+                {/* Clipped Full-Bleed Photo & Scrim (Mockup cards display photo inside their device bezel instead!) */}
+                {card.imageDataUrl && !isMockup && (
                   <g clipPath={`url(#studio-clip-${card.id})`} pointerEvents="none">
                     <image
                       href={card.imageDataUrl}
@@ -744,147 +779,13 @@ export function StudioCanvas({
                             </div>
                           )}
 
-                          {card.blockType === 'kpi' && card.text.trim().length > 0 ? (
-                            (() => {
-                              const kpi = parseKpiBlock(card.text);
-                              const metricPx = Math.max(
-                                30,
-                                Math.min(64, Math.round(card.rect.width * 0.14))
-                              );
-                              return (
-                                <div className="flex flex-col justify-between flex-1 w-full">
-                                  <div
-                                    className={`flex items-center gap-2.5 flex-wrap ${
-                                      align === 'center' ? 'justify-center' : 'justify-start'
-                                    }`}
-                                  >
-                                    <span
-                                      style={{
-                                        fontFamily: fontSpec.headingFamily,
-                                        fontSize: `${metricPx}px`,
-                                        lineHeight: 1.02,
-                                        fontWeight: 700,
-                                        letterSpacing: '-0.035em',
-                                        fontVariantNumeric: 'tabular-nums',
-                                      }}
-                                    >
-                                      {kpi.value}
-                                    </span>
-                                    {kpi.delta && (
-                                      <span
-                                        style={{
-                                          fontSize: `${Math.max(11, Math.round(headlineSize * 0.58))}px`,
-                                          fontWeight: 600,
-                                          padding: '3px 9px',
-                                          borderRadius: '9999px',
-                                          border: '1px solid currentColor',
-                                          opacity: 0.85,
-                                        }}
-                                      >
-                                        {kpi.delta}
-                                      </span>
-                                    )}
-                                  </div>
-                                  {kpi.label && (
-                                    <div
-                                      style={{
-                                        marginTop: '10px',
-                                        fontSize: `${Math.max(13, Math.round(headlineSize * 0.72))}px`,
-                                        fontWeight: 500,
-                                        opacity: 0.78,
-                                      }}
-                                    >
-                                      {kpi.label}
-                                    </div>
-                                  )}
-                                </div>
-                              );
-                            })()
-                          ) : card.blockType === 'checklist' && card.text.trim().length > 0 ? (
-                            (() => {
-                              const list = parseChecklistBlock(card.text);
-                              const itemPx = Math.max(12, Math.round(headlineSize * 0.64));
-                              return (
-                                <div className="flex flex-col w-full">
-                                  <div
-                                    style={{
-                                      fontFamily: fontSpec.headingFamily,
-                                      fontSize: `${headlineSize}px`,
-                                      lineHeight: 1.18,
-                                      fontWeight: fontSpec.headingWeight,
-                                      letterSpacing: fontSpec.letterSpacing,
-                                    }}
-                                  >
-                                    {list.title}
-                                  </div>
-                                  <ul
-                                    style={{
-                                      marginTop: `${Math.max(8, Math.round(headlineSize * 0.42))}px`,
-                                      display: 'flex',
-                                      flexDirection: 'column',
-                                      gap: '6px',
-                                      listStyle: 'none',
-                                      padding: 0,
-                                    }}
-                                  >
-                                    {list.items.map((item, idx) => (
-                                      <li
-                                        key={idx}
-                                        style={{
-                                          fontSize: `${itemPx}px`,
-                                          lineHeight: 1.35,
-                                          opacity: 0.84,
-                                          display: 'flex',
-                                          alignItems: 'baseline',
-                                          gap: '8px',
-                                        }}
-                                      >
-                                        <span style={{ fontWeight: 700 }}>✓</span>
-                                        <span>{item}</span>
-                                      </li>
-                                    ))}
-                                  </ul>
-                                </div>
-                              );
-                            })()
-                          ) : card.text.trim().length > 0 ? (
-                            <div className="w-full">
-                              <div
-                                style={{
-                                  fontFamily: fontSpec.headingFamily,
-                                  fontSize: `${headlineSize}px`,
-                                  lineHeight: 1.15,
-                                  fontWeight: fontSpec.headingWeight,
-                                  letterSpacing: fontSpec.letterSpacing,
-                                }}
-                              >
-                                {firstLine}
-                              </div>
-                              {restLines && (
-                                <div
-                                  style={{
-                                    marginTop: `${Math.max(8, Math.round(headlineSize * 0.34))}px`,
-                                    fontSize: `${Math.max(13, Math.round(headlineSize * 0.56))}px`,
-                                    lineHeight: 1.5,
-                                    opacity: 0.8,
-                                    whiteSpace: 'pre-wrap',
-                                  }}
-                                >
-                                  {restLines}
-                                </div>
-                              )}
-                            </div>
-                          ) : (
-                            <div
-                              className="uppercase tracking-wider font-mono"
-                              style={{
-                                fontSize: `${Math.max(10, Math.round(headlineSize * 0.45))}px`,
-                                opacity: 0.38,
-                              }}
-                            >
-                              {card.contentHint ?? card.shapeName}
-                            </div>
-                          )}
+                          <CardWidgetContent
+                            card={card}
+                            brandAccentHex={snapshot.brandAccentHex}
+                            headlineSize={headlineSize}
+                            align={align}
+                            fontSpec={fontSpec}
+                          />
                         </>
                       )}
                     </div>
