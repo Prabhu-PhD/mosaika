@@ -1029,10 +1029,10 @@ export class WebStudioHost implements IBentoHost {
     const card = this.cards.find((c) => c.id === cardId);
     if (!card) return;
     if (this.activeDoc && this.cards.length > 2) {
-      const res = deleteLeafFromTree(this.activeDoc, card.slotId);
-      if (res.ok) {
+      const next = deleteLeafFromTree(this.activeDoc, card.slotId);
+      if (next) {
         this.selectedCardIds = [];
-        this.commitDocMutation(res.value, true);
+        this.commitDocMutation(next, true);
         return;
       }
     }

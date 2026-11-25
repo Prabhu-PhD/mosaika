@@ -27,7 +27,7 @@ function BlueprintPreviewSvg({
   isZeroGutter,
   isDarkTheme,
 }: {
-  cells: ReturnType<typeof buildCellRenderSpecs>;
+  cells: ReadonlyArray<{ slotId: string; rect: RectPt; role: string; svgPath?: string }>;
   anchorRect: RectPt;
   isZeroGutter: boolean;
   isDarkTheme: boolean;
