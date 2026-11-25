@@ -265,7 +265,7 @@ export function IntentBar({
       className="border-b border-[var(--bento-border)] bg-[var(--bento-bg)] px-3 py-1.5"
       aria-label="Active Layout Intent and Library"
     >
-      <div className="flex items-center justify-between gap-1.5">
+      <div className="flex min-w-0 items-center justify-between gap-1">
         {onToggleLibrary && (
           <button
             type="button"
@@ -276,7 +276,7 @@ export function IntentBar({
             aria-pressed={isLibraryOpen}
             title="Browse 144 curated Mosaika layouts"
             data-testid="btn-toggle-library"
-            className={`flex h-[26px] shrink-0 items-center gap-1 rounded-[2px] border px-2 text-[11px] font-semibold transition-colors ${
+            className={`flex h-[26px] shrink-0 items-center gap-1 rounded-[2px] border px-1.5 text-[10.5px] font-semibold transition-colors ${
               isLibraryOpen
                 ? 'border-[var(--bento-fg)] bg-[var(--bento-fg)] text-[var(--bento-accent-fg)]'
                 : 'border-[var(--bento-border-strong)] bg-[var(--bento-bg)] text-[var(--bento-fg)] hover:bg-[var(--bento-well)]'
@@ -297,11 +297,11 @@ export function IntentBar({
           }}
           data-testid="btn-toggle-intent-picker"
           aria-expanded={open && !isLibraryOpen}
-          className="flex h-[26px] min-w-0 flex-1 items-center justify-between gap-1 rounded-[2px] border border-[var(--bento-border-strong)] bg-[var(--bento-bg)] px-2 text-left transition-colors hover:bg-[var(--bento-well)]"
+          className="flex h-[26px] min-w-0 flex-1 items-center justify-between gap-1 rounded-[2px] border border-[var(--bento-border-strong)] bg-[var(--bento-bg)] px-1.5 text-left transition-colors hover:bg-[var(--bento-well)]"
         >
-          <span className="flex min-w-0 items-center gap-1.5">
+          <span className="flex min-w-0 items-center gap-1">
             <IntentGlyph intent={current.id} active />
-            <span className="truncate text-[11px] font-semibold text-[var(--bento-fg)]">
+            <span className="truncate text-[10.5px] font-semibold text-[var(--bento-fg)]">
               {current.label}
             </span>
           </span>
@@ -318,7 +318,7 @@ export function IntentBar({
             onClick={onMatchStyle}
             data-testid="btn-match-intent-style"
             title={`Apply ${current.label}'s recommended surface preset & hierarchy`}
-            className="flex h-[26px] shrink-0 items-center rounded-[2px] border border-[var(--bento-fg)] bg-[var(--bento-bg)] px-2 text-[10.5px] font-semibold text-[var(--bento-fg)] transition-colors hover:bg-[var(--bento-fg)] hover:text-[var(--bento-accent-fg)]"
+            className="flex h-[26px] shrink-0 items-center rounded-[2px] border border-[var(--bento-fg)] bg-[var(--bento-bg)] px-1.5 text-[10px] font-semibold text-[var(--bento-fg)] transition-colors hover:bg-[var(--bento-fg)] hover:text-[var(--bento-accent-fg)]"
           >
             Match
           </button>

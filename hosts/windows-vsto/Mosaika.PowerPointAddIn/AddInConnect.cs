@@ -269,7 +269,7 @@ namespace Mosaika.PowerPointAddIn
 
             var pane = _ctpFactory.CreateCTP("Mosaika.TaskPaneHostControl", "Mosaika", activeWindow);
             pane.DockPosition = MsoCTPDockPosition.msoCTPDockPositionRight;
-            pane.Width = 340; // PRD Section 7.2: 340 DIPs right-docked pane
+            pane.Width = ComputeDpiAwarePaneWidthPx(new IntPtr(hwnd), targetLogicalDips: 360f);
             pane.VisibleStateChange += OnTaskPaneVisibleChanged;
 
             var control = pane.ContentControl as TaskPaneHostControl;
@@ -281,6 +281,49 @@ namespace Mosaika.PowerPointAddIn
                 _controlsByHwnd[hwnd] = control;
             }
             return pane;
+        }
+
+        [DllImport("user32.dll")]
+        private static extern uint GetDpiForWindow(IntPtr hwnd);
+
+        /// <summary>
+        /// Office CustomTaskPane.Width expects physical pixels on per-monitor DPI-aware Office builds.
+        /// Scales the desired logical CSS width (e.g. 360 DIPs) by the active PowerPoint window's DPI factor.
+        /// </summary>
+        private static int ComputeDpiAwarePaneWidthPx(IntPtr hwnd, float targetLogicalDips)
+        {
+            float dpiScale = 1f;
+            try
+            {
+                if (hwnd != IntPtr.Zero)
+                {
+                    uint dpi = GetDpiForWindow(hwnd);
+                    if (dpi >= 96 && dpi <= 480)
+                    {
+                        dpiScale = dpi / 96f;
+                    }
+                }
+            }
+            catch
+            {
+                try
+                {
+                    using (var g = System.Drawing.Graphics.FromHwnd(IntPtr.Zero))
+                    {
+                        if (g.DpiX >= 96f && g.DpiX <= 480f)
+                        {
+                            dpiScale = g.DpiX / 96f;
+                        }
+                    }
+                }
+                catch
+                {
+                    dpiScale = 1f;
+                }
+            }
+
+            int physicalPx = (int)Math.Round(targetLogicalDips * dpiScale);
+            return Math.Max(340, Math.Min(960, physicalPx));
         }
 
         private int GetActiveWindowHwnd()

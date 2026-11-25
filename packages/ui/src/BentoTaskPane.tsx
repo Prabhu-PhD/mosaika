@@ -935,7 +935,7 @@ export function BentoTaskPane({
       data-bento-theme={theme}
       data-testid="bento-task-pane"
       className={`bento-pane flex h-full shrink-0 flex-col overflow-x-hidden bg-[var(--bento-bg)] text-[var(--bento-fg)] ${
-        fullWidth ? 'w-full min-w-[260px]' : 'w-[320px] min-w-[280px] max-w-[420px]'
+        fullWidth ? 'w-full min-w-0' : 'w-[320px] min-w-0 max-w-[420px]'
       }`}
     >
       <HeaderBar

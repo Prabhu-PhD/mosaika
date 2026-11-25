@@ -29,9 +29,10 @@ namespace Mosaika.PowerPointAddIn
 
         public TaskPaneHostControl()
         {
+            AutoScaleMode = AutoScaleMode.None;
             BackColor = Color.White;
             Dock = DockStyle.Fill;
-            MinimumSize = new Size(280, 400);
+            MinimumSize = Size.Empty;
 
             _webView = new WebView2
             {

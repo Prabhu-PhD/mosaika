@@ -99,18 +99,18 @@ export function ActionRow({
       aria-label="Seed and Reflow Actions"
       className="sticky bottom-0 z-10 flex shrink-0 flex-col gap-1.5 border-t border-[var(--bento-fg)] bg-[var(--bento-bg)] px-3 py-2.5"
     >
-      <div className="flex items-center gap-1.5">
+      <div className="flex min-w-0 items-center gap-1">
         <button
           type="button"
           onClick={onRandomize}
           data-testid="btn-randomize"
-          className="group flex h-[32px] flex-1 items-center justify-center gap-1.5 rounded-[2px] bg-[var(--bento-fg)] px-2.5 text-[12px] font-semibold text-[var(--bento-accent-fg)] transition-opacity hover:opacity-90"
+          className="group flex h-[32px] min-w-0 flex-1 items-center justify-center gap-1 rounded-[2px] bg-[var(--bento-fg)] px-2 text-[11.5px] font-semibold text-[var(--bento-accent-fg)] transition-opacity hover:opacity-90"
         >
-          <Shuffle className="h-3.5 w-3.5 transition-transform duration-150 group-active:rotate-45" />
-          <span>Randomize</span>
+          <Shuffle className="h-3.5 w-3.5 shrink-0 transition-transform duration-150 group-active:rotate-45" />
+          <span className="truncate">Randomize</span>
         </button>
 
-        <div className="flex items-center">
+        <div className="flex shrink-0 items-center">
           <button
             type="button"
             onClick={onSeedBack}
@@ -118,7 +118,7 @@ export function ActionRow({
             title="Previous seed"
             aria-label="Previous seed"
             data-testid="btn-seed-back"
-            className="flex h-[32px] w-[26px] items-center justify-center rounded-l-[2px] border border-[var(--bento-border-strong)] bg-[var(--bento-bg)] text-[var(--bento-fg)] hover:bg-[var(--bento-well)] disabled:opacity-35"
+            className="flex h-[32px] w-[24px] items-center justify-center rounded-l-[2px] border border-[var(--bento-border-strong)] bg-[var(--bento-bg)] text-[var(--bento-fg)] hover:bg-[var(--bento-well)] disabled:opacity-35"
           >
             <ArrowLeft className="h-3 w-3" />
           </button>
@@ -129,13 +129,13 @@ export function ActionRow({
             title="Next seed"
             aria-label="Next seed"
             data-testid="btn-seed-forward"
-            className="flex h-[32px] w-[26px] items-center justify-center rounded-r-[2px] border border-l-0 border-[var(--bento-border-strong)] bg-[var(--bento-bg)] text-[var(--bento-fg)] hover:bg-[var(--bento-well)] disabled:opacity-35"
+            className="flex h-[32px] w-[24px] items-center justify-center rounded-r-[2px] border border-l-0 border-[var(--bento-border-strong)] bg-[var(--bento-bg)] text-[var(--bento-fg)] hover:bg-[var(--bento-well)] disabled:opacity-35"
           >
             <ArrowRight className="h-3 w-3" />
           </button>
         </div>
 
-        <div className="relative flex items-center">
+        <div className="relative flex shrink-0 items-center">
           <input
             type="text"
             value={draftCode}
@@ -149,14 +149,14 @@ export function ActionRow({
             aria-label="Seed Code"
             title="Editable Seed Code (e.g. B5-48219)"
             data-testid="input-seed-code"
-            className="h-[32px] w-[88px] rounded-[2px] border border-[var(--bento-border-strong)] bg-[var(--bento-bg)] pl-2 pr-6 font-mono text-[11px] font-medium tabular-nums text-[var(--bento-fg)] outline-none focus:border-[var(--bento-fg)]"
+            className="h-[32px] w-[78px] rounded-[2px] border border-[var(--bento-border-strong)] bg-[var(--bento-bg)] pl-1.5 pr-5 font-mono text-[10.5px] font-medium tabular-nums text-[var(--bento-fg)] outline-none focus:border-[var(--bento-fg)]"
           />
           <button
             type="button"
             onClick={handleCopySeed}
             title={copied ? 'Copied!' : 'Copy seed code'}
             aria-label="Copy seed code"
-            className="absolute right-1 flex h-5 w-5 items-center justify-center text-[var(--bento-fg-muted)] hover:text-[var(--bento-fg)]"
+            className="absolute right-0.5 flex h-5 w-5 items-center justify-center text-[var(--bento-fg-muted)] hover:text-[var(--bento-fg)]"
           >
             {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
           </button>

@@ -273,15 +273,19 @@ export function Minimap({
 
       {/* InfoGen Crisp Preview Frame (0px radius, 1px hairline border) */}
       <div
-        className="flex items-center justify-center border border-[var(--bento-border)] bg-[var(--bento-bg)] p-2"
+        className="flex items-center justify-center overflow-hidden border border-[var(--bento-border)] bg-[var(--bento-bg)] p-2"
         style={{ maxHeight: 144 }}
       >
         <svg
           ref={svgRef}
-          width={svgW}
-          height={svgH}
           viewBox={`0 0 ${anchor.width} ${anchor.height}`}
-          className="overflow-visible select-none"
+          style={{
+            width: '100%',
+            maxWidth: svgW,
+            maxHeight: 124,
+            aspectRatio: `${anchor.width} / ${anchor.height}`,
+          }}
+          className="block h-auto overflow-visible select-none"
           data-testid="bento-minimap-svg"
           onMouseLeave={() => {
             setHoveredSlotId(null);
@@ -647,11 +651,11 @@ export function Minimap({
 
       {/* InfoGen Crisp Segmented Grid Strip (12x6 | 6x4 | 4x3 | Free) + Flip H/V + Guides */}
       {onSelectGridSystem && (
-        <div className="mt-1.5 flex items-center justify-between gap-1.5">
+        <div className="mt-1.5 flex min-w-0 items-center justify-between gap-1">
           <div
             role="radiogroup"
             aria-label="Swiss Modular Grid System"
-            className="bento-segmented flex-1 grid-cols-4"
+            className="bento-segmented min-w-0 flex-1 grid-cols-4"
           >
             {GRID_SYSTEMS.map((sys) => {
               const active = state.params.gridSystem === sys.id;
@@ -664,14 +668,14 @@ export function Minimap({
                   data-testid={`grid-system-${sys.id}`}
                   title={sys.description}
                   onClick={() => onSelectGridSystem(sys.id)}
-                  className={`bento-seg-btn font-mono text-[10px] ${active ? 'is-active' : ''}`}
+                  className={`bento-seg-btn min-w-0 truncate px-0.5 font-mono text-[9.5px] ${active ? 'is-active' : ''}`}
                 >
                   {sys.label}
                 </button>
               );
             })}
           </div>
-          <div className="flex shrink-0 items-center gap-1">
+          <div className="flex shrink-0 items-center gap-0.5">
             {onMirror && (
               <>
                 <button
@@ -680,7 +684,7 @@ export function Minimap({
                   title="Flip layout horizontally (Left ↔ Right)"
                   aria-label="Flip horizontally"
                   data-testid="btn-flip-h"
-                  className="flex h-[26px] w-[26px] items-center justify-center rounded-[2px] border border-[var(--bento-border-strong)] bg-[var(--bento-bg)] text-[var(--bento-fg)] transition-colors hover:bg-[var(--bento-accent-soft)]"
+                  className="flex h-[26px] w-[24px] items-center justify-center rounded-[2px] border border-[var(--bento-border-strong)] bg-[var(--bento-bg)] text-[var(--bento-fg)] transition-colors hover:bg-[var(--bento-accent-soft)]"
                 >
                   <FlipHorizontal2 className="h-3 w-3" />
                 </button>
@@ -690,7 +694,7 @@ export function Minimap({
                   title="Flip layout vertically (Top ↕ Bottom)"
                   aria-label="Flip vertically"
                   data-testid="btn-flip-v"
-                  className="flex h-[26px] w-[26px] items-center justify-center rounded-[2px] border border-[var(--bento-border-strong)] bg-[var(--bento-bg)] text-[var(--bento-fg)] transition-colors hover:bg-[var(--bento-accent-soft)]"
+                  className="flex h-[26px] w-[24px] items-center justify-center rounded-[2px] border border-[var(--bento-border-strong)] bg-[var(--bento-bg)] text-[var(--bento-fg)] transition-colors hover:bg-[var(--bento-accent-soft)]"
                 >
                   <FlipVertical2 className="h-3 w-3" />
                 </button>
@@ -703,7 +707,7 @@ export function Minimap({
               title={showMinimapGuides ? 'Hide minimap grid guides' : 'Show minimap grid guides'}
               aria-label="Toggle minimap grid guides"
               data-testid="btn-toggle-minimap-guides"
-              className={`flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-[2px] border transition-colors disabled:opacity-35 ${
+              className={`flex h-[26px] w-[24px] shrink-0 items-center justify-center rounded-[2px] border transition-colors disabled:opacity-35 ${
                 showMinimapGuides && state.params.gridSystem !== 'free'
                   ? 'border-[var(--bento-fg)] bg-[var(--bento-fg)] text-[var(--bento-accent-fg)]'
                   : 'border-[var(--bento-border-strong)] bg-[var(--bento-bg)] text-[var(--bento-fg)] hover:bg-[var(--bento-accent-soft)]'
@@ -719,25 +723,25 @@ export function Minimap({
       {primaryLeaf && !isPairSelected && (
         <div
           data-testid="minimap-tile-toolbar"
-          className="mt-1.5 grid grid-cols-6 border border-[var(--bento-border-strong)] bg-[var(--bento-bg)]"
+          className="mt-1.5 grid min-w-0 grid-cols-6 border border-[var(--bento-border-strong)] bg-[var(--bento-bg)]"
         >
           <button
             type="button"
             onClick={() => onToggleLock(primaryLeaf.slotId)}
             data-testid="tile-btn-lock"
             title={primaryLeaf.locked ? 'Unlock card position' : 'Lock card position'}
-            className={`flex flex-col items-center justify-center gap-0.5 py-1.5 text-[9.5px] font-medium transition-colors ${
+            className={`flex min-w-0 flex-col items-center justify-center gap-0.5 overflow-hidden px-0.5 py-1.5 text-[9px] font-medium transition-colors ${
               primaryLeaf.locked
                 ? 'bg-[var(--bento-warn-bg)] text-[var(--bento-warn-text)]'
                 : 'text-[var(--bento-fg)] hover:bg-[var(--bento-well)]'
             }`}
           >
             {primaryLeaf.locked ? (
-              <Lock className="h-3 w-3" strokeWidth={2.2} />
+              <Lock className="h-3 w-3 shrink-0" strokeWidth={2.2} />
             ) : (
-              <Unlock className="h-3 w-3 text-[var(--bento-fg-muted)]" />
+              <Unlock className="h-3 w-3 shrink-0 text-[var(--bento-fg-muted)]" />
             )}
-            <span>{primaryLeaf.locked ? 'Locked' : 'Lock'}</span>
+            <span className="max-w-full truncate">{primaryLeaf.locked ? 'Locked' : 'Lock'}</span>
           </button>
 
           <button
@@ -745,17 +749,17 @@ export function Minimap({
             onClick={() => onToggleHero(primaryLeaf.slotId)}
             data-testid="tile-btn-hero"
             title="Toggle Hero emphasis"
-            className={`flex flex-col items-center justify-center gap-0.5 border-l border-[var(--bento-border)] py-1.5 text-[9.5px] font-medium transition-colors ${
+            className={`flex min-w-0 flex-col items-center justify-center gap-0.5 overflow-hidden border-l border-[var(--bento-border)] px-0.5 py-1.5 text-[9px] font-medium transition-colors ${
               primaryLeaf.role === 'hero'
                 ? 'bg-[var(--bento-fg)] text-[var(--bento-accent-fg)]'
                 : 'text-[var(--bento-fg)] hover:bg-[var(--bento-well)]'
             }`}
           >
             <Star
-              className="h-3 w-3"
+              className="h-3 w-3 shrink-0"
               fill={primaryLeaf.role === 'hero' ? 'currentColor' : 'none'}
             />
-            <span>Hero</span>
+            <span className="max-w-full truncate">Hero</span>
           </button>
 
           <button
@@ -763,14 +767,14 @@ export function Minimap({
             onClick={() => setImagePickerOpen((prev) => !prev)}
             data-testid="tile-btn-image"
             title="Set Image slot"
-            className={`flex flex-col items-center justify-center gap-0.5 border-l border-[var(--bento-border)] py-1.5 text-[9.5px] font-medium transition-colors ${
+            className={`flex min-w-0 flex-col items-center justify-center gap-0.5 overflow-hidden border-l border-[var(--bento-border)] px-0.5 py-1.5 text-[9px] font-medium transition-colors ${
               primaryLeaf.role === 'image' || imagePickerOpen
                 ? 'bg-[var(--bento-fg)] text-[var(--bento-accent-fg)]'
                 : 'text-[var(--bento-fg)] hover:bg-[var(--bento-well)]'
             }`}
           >
-            <ImageIcon className="h-3 w-3" />
-            <span>Image</span>
+            <ImageIcon className="h-3 w-3 shrink-0" />
+            <span className="max-w-full truncate">Image</span>
           </button>
 
           <button
@@ -778,10 +782,10 @@ export function Minimap({
             onClick={() => onSplit(primaryLeaf.slotId, 'vertical')}
             data-testid="tile-btn-split-v"
             title="Split Vertically (Left | Right)"
-            className="flex flex-col items-center justify-center gap-0.5 border-l border-[var(--bento-border)] py-1.5 text-[9.5px] font-medium text-[var(--bento-fg)] transition-colors hover:bg-[var(--bento-well)]"
+            className="flex min-w-0 flex-col items-center justify-center gap-0.5 overflow-hidden border-l border-[var(--bento-border)] px-0.5 py-1.5 text-[9px] font-medium text-[var(--bento-fg)] transition-colors hover:bg-[var(--bento-well)]"
           >
-            <Columns2 className="h-3 w-3 text-[var(--bento-fg-muted)]" />
-            <span>Split V</span>
+            <Columns2 className="h-3 w-3 shrink-0 text-[var(--bento-fg-muted)]" />
+            <span className="max-w-full truncate">Split V</span>
           </button>
 
           <button
@@ -789,10 +793,10 @@ export function Minimap({
             onClick={() => onSplit(primaryLeaf.slotId, 'horizontal')}
             data-testid="tile-btn-split-h"
             title="Split Horizontally (Top / Bottom)"
-            className="flex flex-col items-center justify-center gap-0.5 border-l border-[var(--bento-border)] py-1.5 text-[9.5px] font-medium text-[var(--bento-fg)] transition-colors hover:bg-[var(--bento-well)]"
+            className="flex min-w-0 flex-col items-center justify-center gap-0.5 overflow-hidden border-l border-[var(--bento-border)] px-0.5 py-1.5 text-[9px] font-medium text-[var(--bento-fg)] transition-colors hover:bg-[var(--bento-well)]"
           >
-            <Rows2 className="h-3 w-3 text-[var(--bento-fg-muted)]" />
-            <span>Split H</span>
+            <Rows2 className="h-3 w-3 shrink-0 text-[var(--bento-fg-muted)]" />
+            <span className="max-w-full truncate">Split H</span>
           </button>
 
           <button
@@ -801,10 +805,10 @@ export function Minimap({
             data-testid="tile-btn-delete"
             title="Delete card and reflow"
             style={{ color: 'var(--bento-danger)' }}
-            className="flex flex-col items-center justify-center gap-0.5 border-l border-[var(--bento-border)] py-1.5 text-[9.5px] font-medium transition-colors hover:bg-[var(--bento-well)]"
+            className="flex min-w-0 flex-col items-center justify-center gap-0.5 overflow-hidden border-l border-[var(--bento-border)] px-0.5 py-1.5 text-[9px] font-medium transition-colors hover:bg-[var(--bento-well)]"
           >
-            <Trash2 className="h-3 w-3" />
-            <span>Delete</span>
+            <Trash2 className="h-3 w-3 shrink-0" />
+            <span className="max-w-full truncate">Delete</span>
           </button>
         </div>
       )}
@@ -815,7 +819,7 @@ export function Minimap({
           role="radiogroup"
           aria-label="Selected card shape"
           data-testid="tile-shape-strip"
-          className="mt-1 grid grid-cols-6 border border-[var(--bento-border-strong)] bg-[var(--bento-bg)]"
+          className="mt-1 grid min-w-0 grid-cols-6 border border-[var(--bento-border-strong)] bg-[var(--bento-bg)]"
         >
           {CELL_SHAPE_KINDS.map((kind, idx) => {
             const active = (primaryLeaf.shapeKind ?? 'rect') === kind;
@@ -828,7 +832,7 @@ export function Minimap({
                 data-testid={`tile-shape-${kind}`}
                 title={`Set card shape to ${CELL_SHAPE_LABELS[kind]}`}
                 onClick={() => onSetShapeKind(primaryLeaf.slotId, kind)}
-                className={`py-1 text-center text-[9.5px] font-medium transition-colors ${
+                className={`min-w-0 truncate px-0.5 py-1 text-center text-[9px] font-medium transition-colors ${
                   idx > 0 ? 'border-l border-[var(--bento-border)]' : ''
                 } ${
                   active
