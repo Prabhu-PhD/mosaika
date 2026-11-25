@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  typescript-ci:
+    name: TypeScript Build, Tests & Rule 1 Purity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build all workspace packages
+        run: pnpm build
+
+      - name: Run Vitest unit & geometric invariant tests
+        run: pnpm test
+
+      - name: Typecheck all workspace packages
+        run: pnpm typecheck
+
+      - name: Verify @bento/core Rule 1 purity (no React/DOM/Office/Date.now/Math.random)
+        run: |
+          if grep -En "from ['\"](react|react-dom)|window\.|document\.|Office\.|Math\.random\(|Date\.now\(" packages/core/src/*.ts | grep -v "^\s*\*"; then
+            echo "Rule 1 violation detected in packages/core/src/"
+            exit 1
+          fi
+
+      - name: Smoke-test unified static site assembly
+        env:
+          MOSAIKA_PUBLIC_URL: https://mosaika.example.com
+        run: pnpm build:site
+
+  vsto-net48-ci:
+    name: Windows VSTO (.NET Framework 4.8) Build & xUnit
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Build WebView2 UI bundle
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --filter @bento/contract build
+          pnpm --filter @bento/core build
+          pnpm --filter @bento/ui build
+          pnpm --filter @bento/vsto-web build
+
+      - name: Build & test Mosaika.PowerPointAddIn (.NET 4.8)
+        run: |
+          dotnet test hosts/windows-vsto/Mosaika.PowerPointAddIn.Tests/Mosaika.PowerPointAddIn.Tests.csproj -c Release

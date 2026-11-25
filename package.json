@@ -9,6 +9,7 @@
   },
   "scripts": {
     "build": "pnpm -r --if-present build",
+    "build:site": "node scripts/build-site.mjs",
     "test": "pnpm -r --if-present test",
     "test:core": "pnpm --filter @bento/core test",
     "typecheck": "pnpm -r --if-present typecheck",
