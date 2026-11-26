@@ -11,7 +11,9 @@ import {
   exportToSvg,
 } from '../src/exporters.js';
 import { exportToPptxBytes } from '../src/pptxExporter.js';
+import { parseNotesToBentoPlan, SAMPLE_NOTE_PROMPTS } from '../src/notesToBento.js';
 import { computeArtboardContentRect } from '../src/presets.js';
+import { STUDIO_SHOWCASES } from '../src/showcases.js';
 import { WebStudioHost } from '../src/studioHost.js';
 import {
   buildSquirclePath,
@@ -319,5 +321,73 @@ describe('Mosaika Web Studio — exporters & live reflow', () => {
     expect(decoded?.patterns?.[cards[0]!.slotId]).toBe('rings');
     expect(decoded?.variants?.[cards[1]!.slotId]).toBe('bars');
     expect(decoded?.blocks?.[cards[2]!.slotId]).toBe('qr');
+  });
+
+  it('applies all 12 Wave 3 Starter Showcases cleanly onto hero-first slots and supports Undo', () => {
+    expect(STUDIO_SHOWCASES).toHaveLength(12);
+    const host = new WebStudioHost({ skipDefaultSeed: false });
+    const initialHeroText = host.getSnapshot().cards.find((c) => c.role === 'hero')?.text;
+
+    for (const sc of STUDIO_SHOWCASES) {
+      const result = host.applyShowcase(sc);
+      expect(result.isDark).toBe(Boolean(sc.isDark));
+
+      const snap = host.getSnapshot();
+      expect(snap.cards.length).toBeGreaterThanOrEqual(2);
+      expect(snap.presetId).toBe(sc.presetId);
+      expect(snap.brandAccentHex).toBe(sc.brandAccentHex);
+      expect(snap.backdrop).toBe(sc.backdrop);
+      expect(snap.fontPairing).toBe(sc.fontPairing);
+      expect(snap.selectedCardIds).toEqual([]);
+
+      const heroCard = snap.cards.find((c) => c.role === 'hero') ?? snap.cards[0]!;
+      expect(heroCard.text).toBe(sc.cards[0]!.text);
+    }
+
+    // Undo should step cleanly back through showcase history
+    expect(host.getSnapshot().canUndo).toBe(true);
+    for (let i = 0; i < STUDIO_SHOWCASES.length; i++) {
+      host.undo();
+    }
+    const restoredHero = host.getSnapshot().cards.find((c) => c.role === 'hero');
+    expect(restoredHero?.text).toBe(initialHeroText);
+  });
+
+  it('parses raw Markdown/notes into smart Bento widgets and applies plan to Studio artboard', () => {
+    const saasPlan = parseNotesToBentoPlan(SAMPLE_NOTE_PROMPTS[0]!.markdown);
+    expect(saasPlan.cards.length).toBeGreaterThanOrEqual(5);
+    const saasTypes = new Set(saasPlan.cards.map((c) => c.blockType ?? 'text'));
+    expect(saasTypes.has('kpi')).toBe(true);
+    expect(saasTypes.has('chart')).toBe(true);
+    expect(saasTypes.has('code')).toBe(true);
+    expect(saasTypes.has('checklist')).toBe(true);
+    expect(saasTypes.has('qr')).toBe(true);
+    expect(saasPlan.summary).toContain('cards');
+
+    const boardPlan = parseNotesToBentoPlan(SAMPLE_NOTE_PROMPTS[1]!.markdown);
+    expect(boardPlan.intent).toBe('kpi-dashboard');
+    const boardTypes = new Set(boardPlan.cards.map((c) => c.blockType ?? 'text'));
+    expect(boardTypes.has('kpi')).toBe(true);
+    expect(boardTypes.has('quote')).toBe(true);
+
+    const changelogPlan = parseNotesToBentoPlan(SAMPLE_NOTE_PROMPTS[2]!.markdown);
+    const changelogTypes = new Set(changelogPlan.cards.map((c) => c.blockType ?? 'text'));
+    expect(changelogTypes.has('checklist')).toBe(true);
+    expect(changelogTypes.has('code')).toBe(true);
+    expect(changelogTypes.has('proof')).toBe(true);
+
+    const host = new WebStudioHost({ skipDefaultSeed: false });
+    const applied = host.applyNotesPlan(saasPlan);
+    expect(applied).toBe(true);
+
+    const snap = host.getSnapshot();
+    expect(snap.cards.length).toBe(saasPlan.cards.length);
+    const heroCard = snap.cards.find((c) => c.role === 'hero') ?? snap.cards[0]!;
+    expect(heroCard.text).toContain('Mosaika Studio 2.0');
+
+    // Verify full SVG export works on auto-generated notes layout
+    const svg = exportToSvg(snap);
+    expect(svg).toContain('Mosaika Studio 2.0');
+    expect(svg).not.toContain('<foreignObject');
   });
 });

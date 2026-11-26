@@ -58,6 +58,8 @@ import {
   type CardWidgetVariant,
 } from './cardBlocks.js';
 import { CANVAS_PRESETS, computeArtboardContentRect } from './presets.js';
+import type { NotesToBentoPlan } from './notesToBento.js';
+import type { ShowcaseCardSeed, StudioShowcase } from './showcases.js';
 import type {
   ArtboardBackdropId,
   CardIconId,
@@ -1191,8 +1193,139 @@ export class WebStudioHost implements IBentoHost {
     this.cornerStyle = 'squircle';
     this.fontPairing = 'swiss';
     this.brandAccentHex = '#2563EB';
+    this.cards = [];
     this.seedStarterLayout();
     this.emitChange(true);
+  }
+
+  private applyCardSeedsToDocument(
+    doc: BentoDocumentState,
+    seeds: readonly ShowcaseCardSeed[]
+  ): void {
+    const specs = buildCellRenderSpecs(doc, { supportsCustomGeometry: true });
+    const sortedSpecs = [...specs].sort((a, b) => a.zOrderIndex - b.zOrderIndex);
+    const heroSpecs = sortedSpecs.filter((s) => s.role === 'hero');
+    const otherSpecs = sortedSpecs.filter((s) => s.role !== 'hero');
+    const orderedSpecs = [...heroSpecs, ...otherSpecs];
+
+    const texts: Record<string, string> = {};
+    const blocks: Record<string, CardBlockType> = {};
+    const surfaces: Record<string, CardSurfaceTreatment> = {};
+    const kickers: Record<string, string> = {};
+    const icons: Record<string, CardIconId> = {};
+    const aligns: Record<string, CardTextAlign> = {};
+    const variants: Record<string, CardWidgetVariant> = {};
+    const patterns: Record<string, CardPatternKind> = {};
+
+    orderedSpecs.forEach((spec, idx) => {
+      const seed = seeds[idx];
+      if (!seed) return;
+      texts[spec.slotId] = seed.text;
+      blocks[spec.slotId] = seed.blockType ?? 'text';
+      if (seed.widgetVariant) {
+        variants[spec.slotId] = seed.widgetVariant;
+      }
+      if (seed.kicker) {
+        kickers[spec.slotId] = seed.kicker;
+      }
+      icons[spec.slotId] = seed.icon ?? 'none';
+      aligns[spec.slotId] = seed.textAlign ?? 'tl';
+      surfaces[spec.slotId] =
+        seed.surfaceTreatment ??
+        (this.backdrop !== 'paper' && spec.role !== 'hero' ? 'glass' : 'solid');
+      patterns[spec.slotId] = seed.pattern ?? 'none';
+    });
+
+    // Clear previous cards so stale media/kickers never bleed across showcases
+    this.cards = [];
+    this.applyDocumentDirectly(
+      doc,
+      texts,
+      blocks,
+      surfaces,
+      kickers,
+      icons,
+      aligns,
+      variants,
+      patterns
+    );
+    this.selectedCardIds = [];
+  }
+
+  /** Wave 3 (#8): Apply one of the 12 curated Starter Showcases in a single undoable step. */
+  public applyShowcase(showcase: StudioShowcase): { isDark: boolean } {
+    this.pushUndo();
+
+    const preset = CANVAS_PRESETS.find((p) => p.id === showcase.presetId);
+    if (preset) {
+      this.presetId = preset.id;
+      this.canvasWidth = preset.width;
+      this.canvasHeight = preset.height;
+      this.canvasPadding = preset.defaultPadding;
+    }
+
+    this.isDarkTheme = Boolean(showcase.isDark);
+    this.canvasBgHex = this.isDarkTheme ? '#0D0F0F' : '#FFFFFF';
+    this.brandAccentHex = showcase.brandAccentHex;
+    this.backdrop = showcase.backdrop;
+    this.backdropImageUrl = undefined;
+    this.grainEnabled = showcase.grainEnabled;
+    this.cornerStyle = showcase.cornerStyle;
+    this.fontPairing = showcase.fontPairing;
+
+    const rect = computeArtboardContentRect(
+      this.canvasWidth,
+      this.canvasHeight,
+      this.canvasPadding
+    );
+    const created = createIntentBentoDocument(rect, showcase.intent, {
+      count: showcase.count,
+      gutterPt: showcase.gutterPt,
+      radiusPt: showcase.radiusPt,
+      seed: showcase.seed,
+      stylePreset: showcase.stylePreset,
+      hierarchyMode: 'hero-accent',
+    });
+
+    if (created.ok) {
+      this.seedTrail = [showcase.seed];
+      this.seedIndex = 0;
+      this.applyCardSeedsToDocument(created.value, showcase.cards);
+    }
+
+    this.emitChange(true);
+    return { isDark: this.isDarkTheme };
+  }
+
+  /** Wave 3 (#9): Build a bounded Bento grid from parsed Raw Notes / Markdown. */
+  public applyNotesPlan(plan: NotesToBentoPlan): boolean {
+    if (plan.cards.length === 0) return false;
+    this.pushUndo();
+
+    const rect = computeArtboardContentRect(
+      this.canvasWidth,
+      this.canvasHeight,
+      this.canvasPadding
+    );
+    const count = Math.max(2, Math.min(9, plan.cards.length));
+    const baseSeed = this.activeDoc?.params.seed ?? 48219;
+    const nextSeed = nextDeterministicSeed(baseSeed + count * 137);
+    const created = createIntentBentoDocument(rect, plan.intent, {
+      count,
+      gutterPt: this.activeDoc?.params.gutterPt ?? 16,
+      radiusPt: this.activeDoc?.params.radiusPt ?? 20,
+      seed: nextSeed,
+      stylePreset: this.activeDoc?.params.stylePreset ?? 'soft-modern',
+      hierarchyMode: this.activeDoc?.params.hierarchyMode ?? 'hero-accent',
+    });
+
+    if (!created.ok) return false;
+
+    this.seedTrail = [...this.seedTrail.slice(0, this.seedIndex + 1), nextSeed];
+    this.seedIndex = this.seedTrail.length - 1;
+    this.applyCardSeedsToDocument(created.value, plan.cards);
+    this.emitChange(true);
+    return true;
   }
 
   // --- IBentoHost Implementation ---

@@ -7,12 +7,14 @@ import {
   Link2,
   Moon,
   Redo2,
+  Sparkles,
   Sun,
   Undo2,
 } from 'lucide-react';
 import { ExportModal } from './components/ExportModal.js';
 import { FloatingDock } from './components/FloatingDock.js';
 import { LibraryDrawer } from './components/LibraryDrawer.js';
+import { RemixModal } from './components/RemixModal.js';
 import { StudioCanvas } from './components/StudioCanvas.js';
 import { StudioInspector } from './components/StudioInspector.js';
 import { decodeSharePayload, encodeSharePayload } from './exporters.js';
@@ -37,6 +39,7 @@ export function App() {
   const [showGridOverlay, setShowGridOverlay] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
+  const [remixOpen, setRemixOpen] = useState(false);
   const [shareCopied, setShareCopied] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
@@ -78,14 +81,14 @@ export function App() {
       if (isEditingText) return;
       if (e.key === 'g' || e.key === 'G') {
         setShowGridOverlay((prev) => !prev);
-      } else if (e.code === 'Space' && !exportOpen && !libraryOpen) {
+      } else if (e.code === 'Space' && !exportOpen && !libraryOpen && !remixOpen) {
         e.preventDefault();
         host.randomizeSeed();
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [exportOpen, host, libraryOpen]);
+  }, [exportOpen, host, libraryOpen, remixOpen]);
 
   // Global Ctrl+V Clipboard Image Paste into selected card (#17)
   useEffect(() => {
@@ -193,6 +196,17 @@ export function App() {
           >
             <LayoutGrid className="w-3.5 h-3.5" style={{ color: muted }} />
             <span>Library</span>
+          </button>
+
+          <button
+            type="button"
+            data-testid="topbar-btn-remix"
+            onClick={() => setRemixOpen(true)}
+            className="h-8 px-3 rounded-lg text-[12px] font-medium inline-flex items-center gap-1.5 cursor-pointer transition-colors"
+            style={{ backgroundColor: well, color: fg }}
+          >
+            <Sparkles className="w-3.5 h-3.5" style={{ color: snapshot.brandAccentHex }} />
+            <span>Remix</span>
           </button>
         </div>
 
@@ -388,6 +402,15 @@ export function App() {
         snapshot={snapshot}
         isDarkTheme={isDark}
         onClose={() => setLibraryOpen(false)}
+        onToast={showToast}
+      />
+
+      <RemixModal
+        open={remixOpen}
+        host={host}
+        isDarkTheme={isDark}
+        onThemeSync={(nextDark) => setTheme(nextDark ? 'dark' : 'light')}
+        onClose={() => setRemixOpen(false)}
         onToast={showToast}
       />
 
