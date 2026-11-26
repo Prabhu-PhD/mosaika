@@ -15,6 +15,7 @@ import { ExportModal } from './components/ExportModal.js';
 import { FloatingDock } from './components/FloatingDock.js';
 import { LibraryDrawer } from './components/LibraryDrawer.js';
 import { RemixModal } from './components/RemixModal.js';
+import { SlideFilmstrip } from './components/SlideFilmstrip.js';
 import { StudioCanvas } from './components/StudioCanvas.js';
 import { StudioInspector } from './components/StudioInspector.js';
 import { decodeSharePayload, encodeSharePayload } from './exporters.js';
@@ -37,6 +38,7 @@ export function App() {
 
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
   const [showGridOverlay, setShowGridOverlay] = useState(false);
+  const [previewMode, setPreviewMode] = useState<'desktop' | 'mobile'>('desktop');
   const [exportOpen, setExportOpen] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [remixOpen, setRemixOpen] = useState(false);
@@ -351,6 +353,7 @@ export function App() {
           snapshot={snapshot}
           isDarkTheme={isDark}
           showGridOverlay={showGridOverlay}
+          previewMode={previewMode}
           onSelectCards={(ids) => host.selectCards(ids)}
           onUpdateCardText={(cardId, text) => host.updateCardText(cardId, text)}
           onSetCardImage={(cardId, dataUrl) => host.setCardImageDataUrl(cardId, dataUrl, true)}
@@ -363,12 +366,24 @@ export function App() {
             host.resizeActiveSplit(nodeId, ratio, snap, commit)
           }
         >
+          <SlideFilmstrip
+            host={host}
+            snapshot={snapshot}
+            isDarkTheme={isDark}
+            onToast={showToast}
+          />
           <FloatingDock
             host={host}
             snapshot={snapshot}
             isDarkTheme={isDark}
             showGridOverlay={showGridOverlay}
+            previewMode={previewMode}
             onToggleGrid={() => setShowGridOverlay((v) => !v)}
+            onSetPreviewMode={(mode) => setPreviewMode(mode)}
+            onAddSlide={() => {
+              host.addSlide(false);
+              showToast(`Added slide ${snapshot.slides.length + 1} to carousel.`);
+            }}
           />
         </StudioCanvas>
 
@@ -416,6 +431,7 @@ export function App() {
 
       <ExportModal
         open={exportOpen}
+        host={host}
         snapshot={snapshot}
         sharePayload={host.toSharePayload()}
         isDarkTheme={isDark}

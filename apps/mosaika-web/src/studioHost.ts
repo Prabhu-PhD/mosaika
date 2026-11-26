@@ -66,6 +66,7 @@ import type {
   CardTextAlign,
   CornerStyle,
   FontPairingId,
+  HoverInteractionMode,
 } from './visualCraft.js';
 
 export interface StudioCard {
@@ -94,6 +95,28 @@ export interface StudioCard {
   style: CellStyleSpec;
 }
 
+export interface StudioSlideSummary {
+  id: string;
+  title: string;
+  accentHex: string;
+  cardCount: number;
+}
+
+interface StudioSlideRecord {
+  id: string;
+  title: string;
+  canvasBgHex: string;
+  brandAccentHex: string;
+  backdrop: ArtboardBackdropId;
+  backdropImageUrl?: string;
+  grainEnabled: boolean;
+  cornerStyle: CornerStyle;
+  fontPairing: FontPairingId;
+  hoverMode: HoverInteractionMode;
+  activeDoc: BentoDocumentState | null;
+  cards: StudioCard[];
+}
+
 export interface StudioSnapshot {
   canvasWidth: number;
   canvasHeight: number;
@@ -105,6 +128,7 @@ export interface StudioSnapshot {
   grainEnabled: boolean;
   cornerStyle: CornerStyle;
   fontPairing: FontPairingId;
+  hoverMode: HoverInteractionMode;
   presetId: string;
   cards: StudioCard[];
   selectedCardIds: string[];
@@ -112,6 +136,8 @@ export interface StudioSnapshot {
   activeAnimation: EntranceAnimationSpec | null;
   animationRunId: number;
   savedBlueprints: SavedBentoBlueprint[];
+  slides: StudioSlideSummary[];
+  activeSlideIndex: number;
   canUndo: boolean;
   canRedo: boolean;
   canSeedBack: boolean;
@@ -129,6 +155,7 @@ export interface ShareableStudioPayload {
   grain?: boolean;
   corners?: CornerStyle;
   font?: FontPairingId;
+  hover?: HoverInteractionMode;
   state: BentoDocumentState;
   texts: Record<string, string>;
   kickers?: Record<string, string>;
@@ -151,6 +178,7 @@ interface StudioUndoRecord {
   grainEnabled: boolean;
   cornerStyle: CornerStyle;
   fontPairing: FontPairingId;
+  hoverMode: HoverInteractionMode;
   activeDoc: BentoDocumentState | null;
   cards: StudioCard[];
   selectedCardIds: string[];
@@ -200,6 +228,7 @@ export class WebStudioHost implements IBentoHost {
   private grainEnabled = true;
   private cornerStyle: CornerStyle = 'squircle';
   private fontPairing: FontPairingId = 'swiss';
+  private hoverMode: HoverInteractionMode = 'lift';
   private presetId: string;
   private cards: StudioCard[] = [];
   private selectedCardIds: string[] = [];
@@ -207,6 +236,9 @@ export class WebStudioHost implements IBentoHost {
   private activeAnimation: EntranceAnimationSpec | null = null;
   private animationRunId = 0;
   private savedBlueprints: SavedBentoBlueprint[] = [];
+  private slides: StudioSlideRecord[] = [];
+  private activeSlideIndex = 0;
+  private slideSeq = 1;
   private seedTrail: number[] = [48219];
   private seedIndex = 0;
   private undoStack: StudioUndoRecord[] = [];
@@ -232,7 +264,48 @@ export class WebStudioHost implements IBentoHost {
     } else if (!this.tryRestoreFromLocalStorage() && !options?.skipDefaultSeed) {
       this.seedStarterLayout();
     }
+    this.ensurePrimarySlide();
     this.rebuildSnapshot();
+  }
+
+  private captureCurrentSlideRecord(existingId?: string, existingTitle?: string): StudioSlideRecord {
+    const heroCard = this.cards.find((c) => c.role === 'hero') ?? this.cards[0];
+    const firstLine = heroCard?.text.trim().split(/\r?\n/)[0]?.trim();
+    const fallbackTitle = `Slide ${this.activeSlideIndex + 1}`;
+    const title = existingTitle || (firstLine ? firstLine.slice(0, 26) : fallbackTitle);
+    return JSON.parse(
+      JSON.stringify({
+        id: existingId ?? `slide_${this.slideSeq++}`,
+        title,
+        canvasBgHex: this.canvasBgHex,
+        brandAccentHex: this.brandAccentHex,
+        backdrop: this.backdrop,
+        backdropImageUrl: this.backdropImageUrl,
+        grainEnabled: this.grainEnabled,
+        cornerStyle: this.cornerStyle,
+        fontPairing: this.fontPairing,
+        hoverMode: this.hoverMode,
+        activeDoc: this.activeDoc,
+        cards: this.cards,
+      })
+    ) as StudioSlideRecord;
+  }
+
+  private ensurePrimarySlide(): void {
+    if (this.slides.length === 0) {
+      this.slides = [this.captureCurrentSlideRecord()];
+      this.activeSlideIndex = 0;
+    }
+  }
+
+  private syncActiveSlideRecord(): void {
+    if (this.slides.length === 0) {
+      this.ensurePrimarySlide();
+      return;
+    }
+    const existing = this.slides[this.activeSlideIndex];
+    const updated = this.captureCurrentSlideRecord(existing?.id);
+    this.slides[this.activeSlideIndex] = updated;
   }
 
   private captureUndoRecord(): StudioUndoRecord {
@@ -247,6 +320,7 @@ export class WebStudioHost implements IBentoHost {
       grainEnabled: this.grainEnabled,
       cornerStyle: this.cornerStyle,
       fontPairing: this.fontPairing,
+      hoverMode: this.hoverMode,
       activeDoc: this.activeDoc,
       cards: this.cards,
       selectedCardIds: this.selectedCardIds,
@@ -273,6 +347,7 @@ export class WebStudioHost implements IBentoHost {
     this.grainEnabled = copy.grainEnabled;
     this.cornerStyle = copy.cornerStyle;
     this.fontPairing = copy.fontPairing;
+    this.hoverMode = copy.hoverMode ?? 'lift';
     this.presetId = this.detectPresetId(this.canvasWidth, this.canvasHeight);
     this.activeDoc = copy.activeDoc;
     this.cards = copy.cards;
@@ -451,6 +526,7 @@ export class WebStudioHost implements IBentoHost {
     this.grainEnabled = Boolean(payload.grain);
     this.cornerStyle = payload.corners ?? 'squircle';
     this.fontPairing = payload.font ?? 'swiss';
+    this.hoverMode = payload.hover ?? 'lift';
     this.presetId = this.detectPresetId(this.canvasWidth, this.canvasHeight);
     this.seedTrail = [payload.state.params.seed];
     this.seedIndex = 0;
@@ -502,6 +578,7 @@ export class WebStudioHost implements IBentoHost {
       grain: this.grainEnabled,
       corners: this.cornerStyle,
       font: this.fontPairing,
+      hover: this.hoverMode,
       state: this.activeDoc,
       texts,
       ...(Object.keys(kickers).length > 0 ? { kickers } : {}),
@@ -549,6 +626,7 @@ export class WebStudioHost implements IBentoHost {
         grain: parsed.grain ?? true,
         corners: parsed.corners ?? 'squircle',
         font: parsed.font ?? 'swiss',
+        hover: parsed.hover ?? 'lift',
         state: validState,
         texts: parsed.texts ?? {},
         kickers: parsed.kickers,
@@ -571,6 +649,7 @@ export class WebStudioHost implements IBentoHost {
   }
 
   private rebuildSnapshot(): void {
+    this.syncActiveSlideRecord();
     this.cachedSnapshot = {
       canvasWidth: this.canvasWidth,
       canvasHeight: this.canvasHeight,
@@ -582,6 +661,7 @@ export class WebStudioHost implements IBentoHost {
       grainEnabled: this.grainEnabled,
       cornerStyle: this.cornerStyle,
       fontPairing: this.fontPairing,
+      hoverMode: this.hoverMode,
       presetId: this.presetId,
       cards: [...this.cards],
       selectedCardIds: [...this.selectedCardIds],
@@ -589,6 +669,13 @@ export class WebStudioHost implements IBentoHost {
       activeAnimation: this.activeAnimation,
       animationRunId: this.animationRunId,
       savedBlueprints: [...this.savedBlueprints],
+      slides: this.slides.map((s) => ({
+        id: s.id,
+        title: s.title,
+        accentHex: s.brandAccentHex,
+        cardCount: s.cards.length,
+      })),
+      activeSlideIndex: this.activeSlideIndex,
       canUndo: this.undoStack.length > 0,
       canRedo: this.redoStack.length > 0,
       canSeedBack: this.seedIndex > 0,
@@ -1326,6 +1413,155 @@ export class WebStudioHost implements IBentoHost {
     this.applyCardSeedsToDocument(created.value, plan.cards);
     this.emitChange(true);
     return true;
+  }
+
+  // --- Wave 4: Hover Micro-Interactions (#11) & Opt-in Multi-Slide Carousel (#12) ---
+
+  public setHoverMode(mode: HoverInteractionMode): void {
+    if (this.hoverMode === mode) return;
+    this.pushUndo();
+    this.hoverMode = mode;
+    this.persistToLocalStorage();
+    this.emitChange(false);
+  }
+
+  private loadSlideRecordIntoActiveCanvas(slide: StudioSlideRecord): void {
+    const cloned = JSON.parse(JSON.stringify(slide)) as StudioSlideRecord;
+    this.canvasBgHex = cloned.canvasBgHex;
+    this.brandAccentHex = cloned.brandAccentHex;
+    this.backdrop = cloned.backdrop;
+    this.backdropImageUrl = cloned.backdropImageUrl;
+    this.grainEnabled = cloned.grainEnabled;
+    this.cornerStyle = cloned.cornerStyle;
+    this.fontPairing = cloned.fontPairing;
+    this.hoverMode = cloned.hoverMode ?? 'lift';
+    this.activeDoc = cloned.activeDoc;
+    this.cards = cloned.cards;
+    this.selectedCardIds = [];
+  }
+
+  public addSlide(duplicateCurrent = false): void {
+    this.syncActiveSlideRecord();
+    this.pushUndo();
+
+    const nextIdx = this.slides.length;
+    if (duplicateCurrent) {
+      const cloned = this.captureCurrentSlideRecord(
+        `slide_${this.slideSeq++}`,
+        `Slide ${nextIdx + 1}`
+      );
+      this.slides.push(cloned);
+      this.activeSlideIndex = nextIdx;
+      this.loadSlideRecordIntoActiveCanvas(cloned);
+      this.persistToLocalStorage();
+      this.emitChange(true);
+      return;
+    }
+
+    // Create a fresh variation slide preserving the deck's artboard size, backdrop, brand, and fonts
+    const rect = computeArtboardContentRect(
+      this.canvasWidth,
+      this.canvasHeight,
+      this.canvasPadding
+    );
+    const seed = nextDeterministicSeed((this.activeDoc?.params.seed ?? 48219) + (nextIdx + 1) * 7919);
+    const intent = this.activeDoc?.params.intent ?? 'executive-brief';
+    const count = Math.max(3, Math.min(6, this.activeDoc?.params.count ?? 4));
+    const created = createIntentBentoDocument(rect, intent, {
+      count,
+      gutterPt: this.activeDoc?.params.gutterPt ?? 16,
+      radiusPt: this.activeDoc?.params.radiusPt ?? 20,
+      seed,
+      stylePreset: this.activeDoc?.params.stylePreset ?? 'soft-modern',
+      hierarchyMode: this.activeDoc?.params.hierarchyMode ?? 'hero-accent',
+    });
+
+    if (created.ok) {
+      this.cards = [];
+      this.applyCardSeedsToDocument(created.value, [
+        {
+          text: `Slide ${nextIdx + 1}\nContinue your visual story with consistent Swiss alignment.`,
+          kicker: `PART 0${nextIdx + 1}`,
+          icon: 'layers',
+          textAlign: 'bl',
+          surfaceTreatment: 'mesh',
+        },
+        {
+          text: 'Key Takeaway\nDouble-click any tile to write copy or switch widget type.',
+          surfaceTreatment: this.backdrop !== 'paper' ? 'glass' : 'solid',
+        },
+        {
+          text: '100%\nConsistent\nMatched brand kit & typography',
+          blockType: 'kpi',
+          surfaceTreatment: this.backdrop !== 'paper' ? 'glass' : 'solid',
+        },
+      ]);
+      const newRecord = this.captureCurrentSlideRecord(`slide_${this.slideSeq++}`);
+      this.slides.push(newRecord);
+      this.activeSlideIndex = nextIdx;
+    }
+
+    this.emitChange(true);
+  }
+
+  public selectSlide(index: number): void {
+    if (index < 0 || index >= this.slides.length || index === this.activeSlideIndex) return;
+    this.syncActiveSlideRecord();
+    this.activeSlideIndex = index;
+    const target = this.slides[index];
+    if (target) {
+      this.loadSlideRecordIntoActiveCanvas(target);
+    }
+    this.persistToLocalStorage();
+    this.emitChange(true);
+  }
+
+  public duplicateSlide(index: number): void {
+    if (index < 0 || index >= this.slides.length) return;
+    this.syncActiveSlideRecord();
+    const source = this.slides[index]!;
+    const cloned = JSON.parse(JSON.stringify(source)) as StudioSlideRecord;
+    cloned.id = `slide_${this.slideSeq++}`;
+    cloned.title = `${source.title} (Copy)`;
+    this.slides.splice(index + 1, 0, cloned);
+    this.activeSlideIndex = index + 1;
+    this.loadSlideRecordIntoActiveCanvas(cloned);
+    this.persistToLocalStorage();
+    this.emitChange(true);
+  }
+
+  public deleteSlide(index: number): void {
+    if (this.slides.length <= 1 || index < 0 || index >= this.slides.length) return;
+    this.syncActiveSlideRecord();
+    this.slides.splice(index, 1);
+    const nextIdx = Math.min(index, this.slides.length - 1);
+    this.activeSlideIndex = nextIdx;
+    const target = this.slides[nextIdx];
+    if (target) {
+      this.loadSlideRecordIntoActiveCanvas(target);
+    }
+    this.persistToLocalStorage();
+    this.emitChange(true);
+  }
+
+  public getAllSlideSnapshots(): StudioSnapshot[] {
+    this.syncActiveSlideRecord();
+    const base = this.getSnapshot();
+    return this.slides.map((slide, idx) => ({
+      ...base,
+      canvasBgHex: slide.canvasBgHex,
+      brandAccentHex: slide.brandAccentHex,
+      backdrop: slide.backdrop,
+      backdropImageUrl: slide.backdropImageUrl,
+      grainEnabled: slide.grainEnabled,
+      cornerStyle: slide.cornerStyle,
+      fontPairing: slide.fontPairing,
+      hoverMode: slide.hoverMode,
+      activeDoc: slide.activeDoc,
+      cards: slide.cards.map((c) => ({ ...c, rect: { ...c.rect }, style: { ...c.style } })),
+      selectedCardIds: [],
+      activeSlideIndex: idx,
+    }));
   }
 
   // --- IBentoHost Implementation ---

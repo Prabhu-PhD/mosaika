@@ -20,6 +20,7 @@ export interface StudioCanvasProps {
   snapshot: StudioSnapshot;
   isDarkTheme: boolean;
   showGridOverlay: boolean;
+  previewMode: 'desktop' | 'mobile';
   onSelectCards: (ids: string[]) => void;
   onUpdateCardText: (cardId: string, text: string) => void;
   onSetCardImage: (cardId: string, dataUrl: string) => void;
@@ -118,6 +119,7 @@ export function StudioCanvas({
   snapshot,
   isDarkTheme,
   showGridOverlay,
+  previewMode,
   onSelectCards,
   onUpdateCardText,
   onSetCardImage,
@@ -131,6 +133,11 @@ export function StudioCanvas({
   const [stageBox, setStageBox] = useState<{ w: number; h: number }>({ w: 1020, h: 700 });
   const [editingCardId, setEditingCardId] = useState<string | null>(null);
   const [hoveredCardId, setHoveredCardId] = useState<string | null>(null);
+  const [hoverPointer, setHoverPointer] = useState<{
+    cardId: string;
+    nx: number;
+    ny: number;
+  } | null>(null);
   const [dragSwapSourceId, setDragSwapSourceId] = useState<string | null>(null);
   const [dragOverCardId, setDragOverCardId] = useState<string | null>(null);
   const [hoveredGutterId, setHoveredGutterId] = useState<string | null>(null);
@@ -287,6 +294,152 @@ export function StudioCanvas({
 
   const uiScaleInv = Math.max(0.75, Math.min(2.2, 1 / Math.max(0.3, fittedArtboard.scale)));
   const badgeFontPx = Math.round(11 * uiScaleInv);
+
+  // Mobile Responsive Preview Frame (Wave 4 #13)
+  if (previewMode === 'mobile') {
+    const mobileCards = [...snapshot.cards].sort((a, b) => {
+      if (a.role === 'hero' && b.role !== 'hero') return -1;
+      if (b.role === 'hero' && a.role !== 'hero') return 1;
+      return a.zOrderIndex - b.zOrderIndex;
+    });
+
+    const phoneBgStyle: React.CSSProperties =
+      snapshot.backdrop === 'aurora'
+        ? {
+            background: `radial-gradient(circle at 18% 12%, ${backdropPalette.blobA}44, transparent 58%), radial-gradient(circle at 86% 84%, ${backdropPalette.blobB}38, transparent 58%), ${backdropPalette.baseBg}`,
+          }
+        : snapshot.backdrop === 'dusk'
+          ? {
+              background: `linear-gradient(145deg, ${backdropPalette.baseBg}, ${backdropPalette.blobA}28, ${backdropPalette.blobB}22)`,
+            }
+          : snapshot.backdrop === 'dots'
+            ? {
+                backgroundColor: backdropPalette.baseBg,
+                backgroundImage: `radial-gradient(${backdropPalette.dotColor} 1.4px, transparent 1.4px)`,
+                backgroundSize: '18px 18px',
+              }
+            : snapshot.backdrop === 'photo' && snapshot.backdropImageUrl
+              ? {
+                  backgroundImage: `url(${snapshot.backdropImageUrl})`,
+                  backgroundSize: 'cover',
+                  backgroundPosition: 'center',
+                }
+              : { backgroundColor: snapshot.canvasBgHex };
+
+    return (
+      <div
+        ref={stageRef}
+        className="relative flex-1 min-w-0 h-full flex flex-col items-center justify-center overflow-hidden select-none pb-14 pt-3"
+        style={{ backgroundColor: isDarkTheme ? '#090A0D' : '#EEF0F4' }}
+        onClick={() => {
+          setEditingCardId(null);
+          onSelectCards([]);
+        }}
+      >
+        <div
+          className="flex items-center justify-between mb-2 px-1 text-[11px] font-mono tracking-tight"
+          style={{ width: 390, color: isDarkTheme ? '#71717A' : '#64748B' }}
+        >
+          <span className="font-medium" style={{ color: isDarkTheme ? '#D4D4D8' : '#334155' }}>
+            Mobile Preview · 390px
+          </span>
+          <span>Responsive Flow · {mobileCards.length} cards</span>
+        </div>
+
+        <div
+          data-testid="mobile-preview-frame"
+          className="relative w-[390px] max-h-[calc(100%-82px)] rounded-[40px] p-2.5 flex flex-col overflow-hidden"
+          style={{
+            backgroundColor: isDarkTheme ? '#181A20' : '#18181B',
+            boxShadow: isDarkTheme
+              ? '0 28px 70px rgba(0,0,0,0.75), 0 0 0 1px rgba(255,255,255,0.12)'
+              : '0 28px 70px rgba(15,23,42,0.22)',
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* Phone Notch */}
+          <div className="w-24 h-4 rounded-full bg-black/80 mx-auto mb-2 shrink-0" />
+
+          {/* Scrollable Responsive Bento Screen */}
+          <div
+            className="flex-1 overflow-y-auto rounded-[30px] p-4"
+            style={phoneBgStyle}
+          >
+            <div className="grid grid-cols-2 gap-3">
+              {mobileCards.map((card) => {
+                const isSelected = selectedSet.has(card.id);
+                const isCompact =
+                  card.role !== 'hero' &&
+                  (card.blockType === 'kpi' || card.blockType === 'proof' || card.blockType === 'qr');
+                const isGlass =
+                  card.surfaceTreatment === 'glass' &&
+                  (!card.imageDataUrl || card.blockType === 'mockup');
+                const bgStyle: React.CSSProperties = isGlass
+                  ? {
+                      backgroundColor: isDarkTheme
+                        ? 'rgba(20,22,29,0.52)'
+                        : 'rgba(255,255,255,0.68)',
+                      backdropFilter: 'blur(20px)',
+                      border: isDarkTheme
+                        ? '1px solid rgba(255,255,255,0.16)'
+                        : '1px solid rgba(255,255,255,0.88)',
+                    }
+                  : {
+                      backgroundColor: card.style.fillHex ?? '#FFFFFF',
+                      border:
+                        card.style.borderColorHex && card.style.borderWeightPt > 0
+                          ? `1px solid ${hexToRgba(card.style.borderColorHex, card.style.borderTransparency)}`
+                          : 'none',
+                    };
+
+                return (
+                  <div
+                    key={card.id}
+                    data-testid={`mobile-card-${card.slotId}`}
+                    onClick={() => onSelectCards([card.id])}
+                    className={`${isCompact ? 'col-span-1' : 'col-span-2'} relative rounded-[20px] p-4 overflow-hidden cursor-pointer transition-transform duration-200 ${
+                      snapshot.hoverMode === 'lift' ? 'hover:-translate-y-1' : ''
+                    }`}
+                    style={{
+                      ...bgStyle,
+                      color: card.imageDataUrl && card.blockType !== 'mockup'
+                        ? '#FFFFFF'
+                        : card.style.textColorHex,
+                      minHeight: card.role === 'hero' ? 170 : isCompact ? 128 : 136,
+                      boxShadow: isSelected ? '0 0 0 2px #0EA5E9' : undefined,
+                      fontFamily: fontSpec.bodyFamily,
+                    }}
+                  >
+                    {(card.kicker?.trim() || (card.icon && card.icon !== 'none')) && (
+                      <div className="flex items-center gap-1.5 mb-2 opacity-80">
+                        {card.icon && card.icon !== 'none' && (
+                          <CardIcon icon={card.icon} size={13} />
+                        )}
+                        {card.kicker?.trim() && (
+                          <span className="text-[9.5px] uppercase tracking-[0.12em] font-semibold">
+                            {card.kicker.trim()}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                    <CardWidgetContent
+                      card={card}
+                      brandAccentHex={snapshot.brandAccentHex}
+                      headlineSize={card.role === 'hero' ? 22 : isCompact ? 15 : 17}
+                      align={card.role === 'hero' ? 'bl' : 'tl'}
+                      fontSpec={fontSpec}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        {children}
+      </div>
+    );
+  }
 
   return (
     <div
@@ -560,14 +713,32 @@ export function StudioCanvas({
 
             const anim = snapshot.activeAnimation;
             const animIndex = anim ? anim.orderedSlotIds.indexOf(card.slotId) : -1;
-            const animStyle: React.CSSProperties | undefined =
-              anim && anim.preset !== 'none' && animIndex >= 0
+            const hoverMode = snapshot.hoverMode;
+            const isHoverActive = isHovered && !isEditing && hoverMode !== 'none';
+            const ptr = hoverPointer && hoverPointer.cardId === card.id ? hoverPointer : null;
+
+            let hoverTransform: string | undefined;
+            if (isHoverActive) {
+              if (hoverMode === 'lift') {
+                hoverTransform = 'translateY(-6px)';
+              } else if (hoverMode === 'tilt') {
+                const dx = ptr ? (ptr.nx - 0.5) * 2 : 0;
+                const dy = ptr ? (ptr.ny - 0.5) * 2 : 0;
+                hoverTransform = `translate(${(-dx * 4).toFixed(1)}px, ${(-dy * 4 - 2).toFixed(1)}px) scale(1.012) skewX(${(dx * 1.1).toFixed(2)}deg)`;
+              }
+            }
+
+            const cardGroupStyle: React.CSSProperties = {
+              transformBox: 'fill-box',
+              transformOrigin: 'center',
+              transition: 'transform 220ms cubic-bezier(0.22, 1, 0.36, 1)',
+              ...(hoverTransform ? { transform: hoverTransform } : {}),
+              ...(anim && anim.preset !== 'none' && animIndex >= 0
                 ? {
-                    transformBox: 'fill-box',
-                    transformOrigin: 'center',
                     animation: `mosaika-${anim.preset} ${anim.durationSec}s cubic-bezier(0.22, 1, 0.36, 1) ${(animIndex * anim.staggerSec).toFixed(2)}s both`,
                   }
-                : undefined;
+                : {}),
+            };
 
             const headlineSize =
               card.role === 'hero'
@@ -593,9 +764,24 @@ export function StudioCanvas({
                 key={`${card.id}-${snapshot.animationRunId}`}
                 data-testid={`studio-card-${card.slotId}`}
                 className="cursor-pointer"
-                style={animStyle}
+                style={cardGroupStyle}
                 onMouseEnter={() => setHoveredCardId(card.id)}
-                onMouseLeave={() => setHoveredCardId((prev) => (prev === card.id ? null : prev))}
+                onMouseMove={(e) => {
+                  if (hoverMode !== 'tilt' && hoverMode !== 'spotlight') return;
+                  const svgEl = svgRef.current;
+                  if (!svgEl) return;
+                  const rect = svgEl.getBoundingClientRect();
+                  if (rect.width <= 0 || rect.height <= 0) return;
+                  const svgX = ((e.clientX - rect.left) / rect.width) * snapshot.canvasWidth;
+                  const svgY = ((e.clientY - rect.top) / rect.height) * snapshot.canvasHeight;
+                  const nx = Math.max(0, Math.min(1, (svgX - card.rect.left) / Math.max(1, card.rect.width)));
+                  const ny = Math.max(0, Math.min(1, (svgY - card.rect.top) / Math.max(1, card.rect.height)));
+                  setHoverPointer({ cardId: card.id, nx, ny });
+                }}
+                onMouseLeave={() => {
+                  setHoveredCardId((prev) => (prev === card.id ? null : prev));
+                  setHoverPointer((prev) => (prev?.cardId === card.id ? null : prev));
+                }}
                 onClick={(e) => handleCardClick(e, card)}
                 onDoubleClick={(e) => {
                   e.stopPropagation();
@@ -791,6 +977,29 @@ export function StudioCanvas({
                     </div>
                   </foreignObject>
                 </g>
+
+                {/* Wave 4 (#11): Cursor-tracking Spotlight Specular Glow */}
+                {isHoverActive && hoverMode === 'spotlight' && ptr && (
+                  <g clipPath={`url(#studio-clip-${card.id})`} pointerEvents="none">
+                    <radialGradient
+                      id={`spotlight-${card.id}`}
+                      cx={`${Math.round(ptr.nx * 100)}%`}
+                      cy={`${Math.round(ptr.ny * 100)}%`}
+                      r="55%"
+                    >
+                      <stop offset="0%" stopColor={snapshot.brandAccentHex} stopOpacity="0.22" />
+                      <stop offset="45%" stopColor="#FFFFFF" stopOpacity="0.14" />
+                      <stop offset="100%" stopColor="#FFFFFF" stopOpacity="0" />
+                    </radialGradient>
+                    <rect
+                      x={card.rect.left}
+                      y={card.rect.top}
+                      width={card.rect.width}
+                      height={card.rect.height}
+                      fill={`url(#spotlight-${card.id})`}
+                    />
+                  </g>
+                )}
 
                 {/* Subtle Lock Indicator */}
                 {card.locked && (

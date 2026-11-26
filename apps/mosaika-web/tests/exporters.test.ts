@@ -5,16 +5,20 @@ import {
   createIntentBentoDocument,
 } from '@bento/core';
 import {
+  computeResponsiveGridSpans,
   decodeSharePayload,
   encodeSharePayload,
+  exportDeckToPrintHtml,
   exportToHtmlTailwind,
+  exportToReactFramerMotion,
   exportToSvg,
 } from '../src/exporters.js';
-import { exportToPptxBytes } from '../src/pptxExporter.js';
+import { exportDeckToPptxBytes, exportToPptxBytes } from '../src/pptxExporter.js';
 import { parseNotesToBentoPlan, SAMPLE_NOTE_PROMPTS } from '../src/notesToBento.js';
 import { computeArtboardContentRect } from '../src/presets.js';
 import { STUDIO_SHOWCASES } from '../src/showcases.js';
 import { WebStudioHost } from '../src/studioHost.js';
+import { computeCardMotionState } from '../src/videoExporter.js';
 import {
   buildSquirclePath,
   extractDominantBrandColorFromRgba,
@@ -389,5 +393,81 @@ describe('Mosaika Web Studio — exporters & live reflow', () => {
     const svg = exportToSvg(snap);
     expect(svg).toContain('Mosaika Studio 2.0');
     expect(svg).not.toContain('<foreignObject');
+  });
+
+  it('supports Wave 4 Hover FX modes, responsive 12-col CSS Grid spans, and React + Framer Motion (.tsx) export', () => {
+    const host = new WebStudioHost({ skipDefaultSeed: false });
+    host.setHoverMode('spotlight');
+    expect(host.getSnapshot().hoverMode).toBe('spotlight');
+
+    const encoded = encodeSharePayload(host.toSharePayload()!);
+    const decoded = decodeSharePayload(encoded);
+    expect(decoded?.hover).toBe('spotlight');
+
+    const snap = host.getSnapshot();
+    const spans = computeResponsiveGridSpans(snap);
+    expect(spans).toHaveLength(snap.cards.length);
+    for (const sp of spans) {
+      expect(sp.colStart).toBeGreaterThanOrEqual(1);
+      expect(sp.colSpan).toBeGreaterThanOrEqual(1);
+      expect(sp.colStart + sp.colSpan - 1).toBeLessThanOrEqual(12);
+    }
+
+    const html = exportToHtmlTailwind(snap);
+    expect(html).toContain('@media (max-width: 767px)');
+    expect(html).toContain('hover:shadow-xl');
+
+    const tsx = exportToReactFramerMotion(snap);
+    expect(tsx).toContain("import { motion } from 'framer-motion';");
+    expect(tsx).toContain('export function MosaikaBento()');
+    expect(tsx).toContain('grid-cols-1 md:grid-cols-12');
+    expect(tsx).toContain('whileHover={{');
+    expect(tsx).toContain('Mosaika Studio');
+  });
+
+  it('supports Wave 4 Multi-Slide Carousels and exports multi-slide .pptx + print PDF decks', async () => {
+    const host = new WebStudioHost({ skipDefaultSeed: false });
+    expect(host.getSnapshot().slides).toHaveLength(1);
+
+    host.addSlide(false);
+    expect(host.getSnapshot().slides).toHaveLength(2);
+    expect(host.getSnapshot().activeSlideIndex).toBe(1);
+
+    host.duplicateSlide(1);
+    expect(host.getSnapshot().slides).toHaveLength(3);
+    expect(host.getSnapshot().activeSlideIndex).toBe(2);
+
+    host.deleteSlide(2);
+    expect(host.getSnapshot().slides).toHaveLength(2);
+
+    host.selectSlide(0);
+    expect(host.getSnapshot().activeSlideIndex).toBe(0);
+
+    const deckSnapshots = host.getAllSlideSnapshots();
+    expect(deckSnapshots).toHaveLength(2);
+
+    const pptxBytes = await exportDeckToPptxBytes(deckSnapshots);
+    expect(pptxBytes.byteLength).toBeGreaterThan(10_000);
+    const ascii = new TextDecoder('latin1').decode(pptxBytes);
+    expect(ascii).toContain('ppt/slides/slide1.xml');
+    expect(ascii).toContain('ppt/slides/slide2.xml');
+
+    const printHtml = exportDeckToPrintHtml(deckSnapshots);
+    expect(printHtml).toContain('aria-label="Slide 1"');
+    expect(printHtml).toContain('aria-label="Slide 2"');
+  });
+
+  it('computes deterministic Wave 4 60fps video motion curves cleanly across entrance, hold, and loop tail', () => {
+    const startFrame = computeCardMotionState(2, 0.0, 3.2);
+    expect(startFrame.opacity).toBe(0);
+    expect(startFrame.offsetY).toBeCloseTo(28, 1);
+
+    const holdFrame = computeCardMotionState(0, 1.5, 3.2);
+    expect(holdFrame.opacity).toBeCloseTo(1, 2);
+    expect(holdFrame.scale).toBeCloseTo(1, 2);
+    expect(holdFrame.offsetY).toBeCloseTo(0, 2);
+
+    const tailFrame = computeCardMotionState(0, 3.15, 3.2);
+    expect(tailFrame.opacity).toBeLessThan(holdFrame.opacity);
   });
 });

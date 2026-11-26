@@ -509,8 +509,62 @@ export function exportToSvg(snapshot: StudioSnapshot): string {
   ].join('\n');
 }
 
+export interface ResponsiveGridSpan {
+  cardId: string;
+  slotId: string;
+  colStart: number; // 1..12
+  colSpan: number; // 1..12
+  rowStart: number; // 1..12
+  rowSpan: number; // 1..12
+}
+
+/**
+ * Wave 4 (#13): Maps bounded artboard rectangles onto a clean 12-column × 6-row
+ * responsive CSS Grid so desktop keeps Swiss proportions while mobile (<768px) stacks cleanly.
+ */
+export function computeResponsiveGridSpans(snapshot: StudioSnapshot): ResponsiveGridSpan[] {
+  const { cards, canvasWidth, canvasHeight, canvasPadding } = snapshot;
+  if (cards.length === 0) return [];
+
+  const contentLeft = canvasPadding;
+  const contentTop = canvasPadding;
+  const contentW = Math.max(1, canvasWidth - canvasPadding * 2);
+  const contentH = Math.max(1, canvasHeight - canvasPadding * 2);
+  const totalCols = 12;
+  const totalRows = 6;
+
+  return cards.map((card) => {
+    const x1 = Math.max(0, Math.min(1, (card.rect.left - contentLeft) / contentW));
+    const x2 = Math.max(0, Math.min(1, (card.rect.left + card.rect.width - contentLeft) / contentW));
+    const y1 = Math.max(0, Math.min(1, (card.rect.top - contentTop) / contentH));
+    const y2 = Math.max(0, Math.min(1, (card.rect.top + card.rect.height - contentTop) / contentH));
+
+    const colStart = Math.max(1, Math.min(totalCols, Math.round(x1 * totalCols) + 1));
+    const colEnd = Math.max(colStart + 1, Math.min(totalCols + 1, Math.round(x2 * totalCols) + 1));
+    const rowStart = Math.max(1, Math.min(totalRows, Math.round(y1 * totalRows) + 1));
+    const rowEnd = Math.max(rowStart + 1, Math.min(totalRows + 1, Math.round(y2 * totalRows) + 1));
+
+    return {
+      cardId: card.id,
+      slotId: card.slotId,
+      colStart,
+      colSpan: Math.max(1, colEnd - colStart),
+      rowStart,
+      rowSpan: Math.max(1, rowEnd - rowStart),
+    };
+  });
+}
+
+function escapeTsxString(input: string): string {
+  return input
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/\r?\n/g, '\\n');
+}
+
 /**
  * Generates clean, responsive HTML + Tailwind CSS markup ready to paste into any web project.
+ * Keeps exact Swiss proportions on desktop and auto-stacks gracefully below 768px.
  */
 export function exportToHtmlTailwind(snapshot: StudioSnapshot): string {
   const { canvasWidth: w, canvasHeight: h, canvasBgHex, cards, activeAnimation, backdrop } = snapshot;
@@ -518,6 +572,14 @@ export function exportToHtmlTailwind(snapshot: StudioSnapshot): string {
   const palette = computeBackdropPalette(snapshot.brandAccentHex, isDarkBg);
   const fontSpec = getFontPairing(snapshot.fontPairing);
   const hasMotion = Boolean(activeAnimation && activeAnimation.preset !== 'none');
+  const hoverClass =
+    snapshot.hoverMode === 'lift'
+      ? ' transition-transform duration-200 hover:-translate-y-1'
+      : snapshot.hoverMode === 'tilt'
+        ? ' transition-transform duration-200 hover:scale-[1.015] hover:-translate-y-0.5'
+        : snapshot.hoverMode === 'spotlight'
+          ? ' transition-shadow duration-200 hover:shadow-xl'
+          : '';
 
   const sectionBgCss =
     backdrop === 'aurora'
@@ -647,7 +709,7 @@ export function exportToHtmlTailwind(snapshot: StudioSnapshot): string {
     return [
       `  <!-- ${card.slotId} (${card.role}) -->`,
       `  <div`,
-      `    class="absolute overflow-hidden p-5 flex flex-col ${alignClass}${shadowClass}"`,
+      `    class="mosaika-tile absolute overflow-hidden p-5 flex flex-col ${alignClass}${shadowClass}${hoverClass}"`,
       `    style="left: ${leftPct}%; top: ${topPct}%; width: ${widthPct}%; height: ${heightPct}%; ${bgStyle} ${borderStyle} ${radiusStyle} color: ${card.style.textColorHex}; font-family: ${escapeXml(fontSpec.bodyFamily)};${motionStyle}"`,
       `  >`,
       ...innerHtml,
@@ -655,10 +717,16 @@ export function exportToHtmlTailwind(snapshot: StudioSnapshot): string {
     ].join('\n');
   });
 
+  const responsiveRules = [
+    `  @media (max-width: 767px) {`,
+    `    .mosaika-bento { aspect-ratio: auto !important; display: grid !important; grid-template-columns: 1fr; gap: 14px; padding: 16px; }`,
+    `    .mosaika-tile { position: relative !important; left: auto !important; top: auto !important; width: 100% !important; height: auto !important; min-height: 150px; }`,
+    `  }`,
+  ];
+
   const keyframesBlock =
     hasMotion && activeAnimation
       ? [
-          `<style>`,
           `  @keyframes mosaika-enter {`,
           activeAnimation.preset === 'rise-stagger'
             ? `    from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: translateY(0); }`
@@ -668,19 +736,234 @@ export function exportToHtmlTailwind(snapshot: StudioSnapshot): string {
                 ? `    from { opacity: 0; clip-path: inset(0 100% 0 0); } to { opacity: 1; clip-path: inset(0 0 0 0); }`
                 : `    from { opacity: 0; } to { opacity: 1; }`,
           `  }`,
-          `</style>`,
         ]
       : [];
 
   return [
-    `<!-- Generated by Mosaika Studio (${w}×${h}) -->`,
+    `<!-- Generated by Mosaika Studio (${w}×${h}) · Responsive Desktop + Mobile -->`,
+    `<style>`,
+    ...responsiveRules,
     ...keyframesBlock,
+    `</style>`,
     `<section`,
-    `  class="relative w-full mx-auto overflow-hidden"`,
+    `  class="mosaika-bento relative w-full mx-auto overflow-hidden"`,
     `  style="max-width: ${w}px; aspect-ratio: ${w} / ${h}; ${sectionBgCss}"`,
     `>`,
     ...cardBlocks,
     `</section>`,
+  ].join('\n');
+}
+
+/**
+ * Wave 4 (#14): Drop-in React + TypeScript + Framer Motion component exporter.
+ * Uses a responsive 12-column CSS Grid (grid-cols-1 md:grid-cols-12) with staggered spring motion
+ * and hover micro-interactions matching the Studio's active Hover FX setting.
+ */
+export function exportToReactFramerMotion(snapshot: StudioSnapshot): string {
+  const { canvasWidth: w, canvasHeight: h, canvasBgHex, cards, backdrop, hoverMode } = snapshot;
+  const isDarkBg = canvasBgHex.toLowerCase() === '#0d0f0f' || canvasBgHex.toLowerCase() === '#090a0d';
+  const palette = computeBackdropPalette(snapshot.brandAccentHex, isDarkBg);
+  const fontSpec = getFontPairing(snapshot.fontPairing);
+  const spans = computeResponsiveGridSpans(snapshot);
+  const spanMap = new Map(spans.map((s) => [s.cardId, s]));
+
+  const containerBg =
+    backdrop === 'aurora'
+      ? `radial-gradient(circle at 18% 18%, ${palette.blobA}77 0%, transparent 55%), radial-gradient(circle at 84% 24%, ${palette.blobB}70 0%, transparent 52%), radial-gradient(circle at 55% 88%, ${palette.blobC}66 0%, transparent 55%), ${palette.baseBg}`
+      : backdrop === 'dusk'
+        ? `linear-gradient(135deg, ${isDarkBg ? '#0B0F1A, #131826, #1C1628' : '#FDFBF7, #F3F4F8, #EBF0F9'})`
+        : canvasBgHex;
+
+  const hoverProp =
+    hoverMode === 'lift'
+      ? `whileHover={{ y: -5, transition: { duration: 0.2 } }}`
+      : hoverMode === 'tilt'
+        ? `whileHover={{ scale: 1.015, rotate: -0.4, transition: { duration: 0.2 } }}`
+        : hoverMode === 'spotlight'
+          ? `whileHover={{ scale: 1.01, boxShadow: '0 20px 44px rgba(15,23,42,0.14)' }}`
+          : '';
+
+  const jsxCards = cards.map((card, idx) => {
+    const sp = spanMap.get(card.id);
+    const colSpan = sp ? Math.min(12, Math.max(1, sp.colSpan)) : 6;
+    const rowSpan = sp ? Math.min(6, Math.max(1, sp.rowSpan)) : 2;
+    const radiusPx = Math.round(card.cornerAdjustment * Math.min(card.rect.width, card.rect.height));
+    const isGlass = card.surfaceTreatment === 'glass';
+    const cardBg = isGlass
+      ? isDarkBg
+        ? 'rgba(20, 22, 29, 0.48)'
+        : 'rgba(255, 255, 255, 0.62)'
+      : card.style.fillHex ?? '#FFFFFF';
+
+    let bodyJsx: string;
+    if (card.blockType === 'kpi') {
+      const kpi = parseKpiBlock(card.text.trim() || card.contentHint || '');
+      bodyJsx = [
+        `          <div className="flex items-center gap-2">`,
+        `            <span className="text-4xl font-bold tracking-tight tabular-nums">${escapeXml(kpi.value)}</span>`,
+        kpi.delta
+          ? `            <span className="text-xs font-semibold px-2 py-0.5 rounded-full border border-current opacity-85">${escapeXml(kpi.delta)}</span>`
+          : '',
+        `          </div>`,
+        kpi.label ? `          <p className="mt-2 text-xs font-medium opacity-80">${escapeXml(kpi.label)}</p>` : '',
+      ]
+        .filter(Boolean)
+        .join('\n');
+    } else if (card.blockType === 'checklist') {
+      const list = parseChecklistBlock(card.text.trim());
+      bodyJsx = [
+        `          <h3 className="text-sm font-semibold">${escapeXml(list.title)}</h3>`,
+        `          <ul className="mt-2 space-y-1 text-xs opacity-85">`,
+        ...list.items.map((item) => `            <li>✓ ${escapeXml(item)}</li>`),
+        `          </ul>`,
+      ].join('\n');
+    } else if (card.blockType === 'code') {
+      const code = parseCodeBlock(card.text.trim());
+      bodyJsx = [
+        `          <h3 className="text-sm font-semibold">${escapeXml(code.title)}</h3>`,
+        `          <pre className="mt-2 rounded-xl bg-zinc-950 text-zinc-100 p-3 text-xs font-mono overflow-x-auto">`,
+        `            <code>{"${escapeTsxString(code.lines.join('\n'))}"}</code>`,
+        `          </pre>`,
+      ].join('\n');
+    } else if (card.blockType === 'chart') {
+      const ch = parseChartBlock(card.text.trim());
+      const { linePath } = computeSparklineGeometry(ch.values, 240, 72);
+      bodyJsx = [
+        `          <div className="flex items-baseline justify-between gap-2">`,
+        `            <h3 className="text-sm font-semibold">${escapeXml(ch.title)}</h3>`,
+        ch.delta ? `            <span className="text-xs font-semibold opacity-75">${escapeXml(ch.delta)}</span>` : '',
+        `          </div>`,
+        `          <svg viewBox="0 0 240 72" className="w-full mt-3">`,
+        `            <path d="${linePath}" fill="none" stroke="${snapshot.brandAccentHex}" strokeWidth={3} strokeLinecap="round" />`,
+        `          </svg>`,
+      ]
+        .filter(Boolean)
+        .join('\n');
+    } else if (card.blockType === 'quote') {
+      const q = parseQuoteBlock(card.text.trim());
+      bodyJsx = [
+        `          <blockquote className="text-lg italic leading-snug">“${escapeXml(q.quote)}”</blockquote>`,
+        q.author ? `          <p className="mt-2 text-xs font-semibold opacity-70">— ${escapeXml(q.author)}</p>` : '',
+      ]
+        .filter(Boolean)
+        .join('\n');
+    } else {
+      const lines = (card.text.trim() || card.shapeName).split(/\r?\n/);
+      const title = escapeXml(lines[0] ?? '');
+      const body = lines.slice(1).map(escapeXml).join(' ');
+      bodyJsx = [
+        `          <h3 className="${card.role === 'hero' ? 'text-2xl' : 'text-base'} font-semibold tracking-tight leading-tight">${title}</h3>`,
+        body ? `          <p className="mt-2 text-xs opacity-80 leading-relaxed">${body}</p>` : '',
+      ]
+        .filter(Boolean)
+        .join('\n');
+    }
+
+    const kickerJsx = card.kicker?.trim()
+      ? `          <span className="text-[10px] font-semibold uppercase tracking-widest opacity-70 mb-1.5">${escapeXml(card.kicker.trim())}</span>\n`
+      : '';
+
+    const gridPlacementStyle = sp
+      ? `gridColumn: 'span ${colSpan} / span ${colSpan}', gridRow: 'span ${rowSpan} / span ${rowSpan}', `
+      : '';
+
+    return [
+      `        <motion.div`,
+      `          key="${card.slotId}"`,
+      `          variants={itemVariants}`,
+      `          custom={${idx}}`,
+      hoverProp ? `          ${hoverProp}` : null,
+      `          className="col-span-1 md:col-span-${colSpan} md:row-span-${rowSpan} relative overflow-hidden p-6 flex flex-col justify-between${isGlass ? ' backdrop-blur-xl' : ''}"`,
+      `          style={{`,
+      `            ${gridPlacementStyle}background: "${cardBg}",`,
+      `            color: "${card.style.textColorHex}",`,
+      `            borderRadius: ${radiusPx},`,
+      `            border: "1px solid ${isGlass ? (isDarkBg ? 'rgba(255,255,255,0.16)' : 'rgba(255,255,255,0.88)') : 'rgba(15,23,42,0.08)'}",`,
+      `          }}`,
+      `        >`,
+      `${kickerJsx}${bodyJsx}`,
+      `        </motion.div>`,
+    ]
+      .filter((line): line is string => line !== null)
+      .join('\n');
+  });
+
+  return [
+    `import { motion } from 'framer-motion';`,
+    ``,
+    `const itemVariants = {`,
+    `  hidden: { opacity: 0, y: 20, scale: 0.98 },`,
+    `  visible: (i: number) => ({`,
+    `    opacity: 1,`,
+    `    y: 0,`,
+    `    scale: 1,`,
+    `    transition: {`,
+    `      delay: i * 0.08,`,
+    `      duration: 0.45,`,
+    `      ease: [0.22, 1, 0.36, 1],`,
+    `    },`,
+    `  }),`,
+    `};`,
+    ``,
+    `/**`,
+    ` * Generated by Mosaika Studio (${w}×${h})`,
+    ` * Responsive 12-column Bento Grid with Framer Motion entrance & Hover FX.`,
+    ` */`,
+    `export function MosaikaBento() {`,
+    `  return (`,
+    `    <section`,
+    `      className="w-full mx-auto p-6 md:p-10 rounded-3xl overflow-hidden"`,
+    `      style={{`,
+    `        maxWidth: ${w},`,
+    `        background: "${containerBg}",`,
+    `        fontFamily: "${escapeTsxString(fontSpec.bodyFamily)}",`,
+    `      }}`,
+    `    >`,
+    `      <motion.div`,
+    `        initial="hidden"`,
+    `        whileInView="visible"`,
+    `        viewport={{ once: true, amount: 0.2 }}`,
+    `        className="grid grid-cols-1 md:grid-cols-12 auto-rows-[minmax(140px,auto)] gap-4"`,
+    `      >`,
+    ...jsxCards,
+    `      </motion.div>`,
+    `    </section>`,
+    `  );`,
+    `}`,
+  ].join('\n');
+}
+
+/**
+ * Wave 4 (#12): Generates a print-ready multi-page HTML document for Multi-Slide Carousel PDF export.
+ */
+export function exportDeckToPrintHtml(snapshots: readonly StudioSnapshot[]): string {
+  const first = snapshots[0];
+  const w = first?.canvasWidth ?? 1440;
+  const h = first?.canvasHeight ?? 900;
+  const pages = snapshots.map(
+    (snap, idx) =>
+      `  <section class="slide-page" aria-label="Slide ${idx + 1}">\n${exportToSvg(snap)}\n  </section>`
+  );
+
+  return [
+    `<!DOCTYPE html>`,
+    `<html lang="en">`,
+    `<head>`,
+    `  <meta charset="utf-8" />`,
+    `  <title>Mosaika Deck (${snapshots.length} Slides)</title>`,
+    `  <style>`,
+    `    @page { size: ${w}px ${h}px; margin: 0; }`,
+    `    * { box-sizing: border-box; margin: 0; padding: 0; }`,
+    `    body { background: #111; }`,
+    `    .slide-page { width: ${w}px; height: ${h}px; page-break-after: always; break-after: page; overflow: hidden; }`,
+    `    .slide-page:last-child { page-break-after: auto; break-after: auto; }`,
+    `    .slide-page svg { display: block; width: 100%; height: 100%; }`,
+    `  </style>`,
+    `</head>`,
+    `<body>`,
+    ...pages,
+    `</body>`,
+    `</html>`,
   ].join('\n');
 }
 

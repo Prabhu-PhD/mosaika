@@ -3,6 +3,7 @@ import { getAutoContrastTextColor } from '@bento/core';
 export type ArtboardBackdropId = 'paper' | 'aurora' | 'dusk' | 'dots' | 'photo';
 export type CornerStyle = 'rounded' | 'squircle';
 export type FontPairingId = 'swiss' | 'editorial' | 'tech' | 'display';
+export type HoverInteractionMode = 'none' | 'lift' | 'tilt' | 'spotlight';
 export type CardTextAlign = 'tl' | 'bl' | 'center' | 'split';
 export type CardIconId =
   | 'none'
@@ -77,6 +78,16 @@ export const BACKDROP_OPTIONS: ReadonlyArray<{ id: ArtboardBackdropId; label: st
   { id: 'dusk', label: 'Dusk' },
   { id: 'dots', label: 'Dots' },
   { id: 'photo', label: 'Photo' },
+];
+
+export const HOVER_INTERACTION_OPTIONS: ReadonlyArray<{
+  id: HoverInteractionMode;
+  label: string;
+}> = [
+  { id: 'none', label: 'Off' },
+  { id: 'lift', label: 'Lift' },
+  { id: 'tilt', label: 'Tilt' },
+  { id: 'spotlight', label: 'Glow' },
 ];
 
 export const CARD_ICON_OPTIONS: ReadonlyArray<{ id: CardIconId; label: string }> = [

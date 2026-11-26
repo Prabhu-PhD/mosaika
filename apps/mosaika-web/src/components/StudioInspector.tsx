@@ -47,6 +47,7 @@ import {
   CARD_ICON_OPTIONS,
   extractBrandFromImageFile,
   FONT_PAIRINGS,
+  HOVER_INTERACTION_OPTIONS,
   type CardTextAlign,
 } from '../visualCraft.js';
 import { CardIcon } from './CardIcon.js';
@@ -557,6 +558,34 @@ export function StudioInspector({
                   </div>
                 </div>
               )}
+
+              {/* Wave 4 (#11): Hover Micro-Interaction FX */}
+              <div className="space-y-1.5">
+                <span className="text-[12px] font-medium" style={{ color: muted }}>
+                  Hover FX
+                </span>
+                <div className="grid grid-cols-4 gap-1 p-1 rounded-lg" style={{ backgroundColor: well }}>
+                  {HOVER_INTERACTION_OPTIONS.map((opt) => {
+                    const active = snapshot.hoverMode === opt.id;
+                    return (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        data-testid={`hover-mode-${opt.id}`}
+                        onClick={() => host.setHoverMode(opt.id)}
+                        className="py-1.5 rounded-md text-[11px] font-medium transition-all cursor-pointer"
+                        style={{
+                          backgroundColor: active ? bg : 'transparent',
+                          color: active ? fg : muted,
+                          boxShadow: active ? '0 1px 2px rgba(0,0,0,0.06)' : 'none',
+                        }}
+                      >
+                        {opt.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
             </section>
 
             <hr style={{ borderColor: border }} />
