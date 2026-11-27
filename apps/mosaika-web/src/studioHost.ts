@@ -185,6 +185,7 @@ interface StudioUndoRecord {
 }
 
 const STORAGE_KEY = 'mosaika_web_studio_v1';
+const DECK_STORAGE_KEY = 'mosaika_web_studio_deck_v2';
 const MAX_UNDO_STEPS = 40;
 
 const STUDIO_CAPABILITIES: HostCapabilities = {
@@ -597,9 +598,36 @@ export class WebStudioHost implements IBentoHost {
       const payload = this.toSharePayload();
       if (!payload) {
         globalThis.localStorage.removeItem(STORAGE_KEY);
+        globalThis.localStorage.removeItem(DECK_STORAGE_KEY);
         return;
       }
       globalThis.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+
+      // Persist full Multi-Slide Carousel deck when >1 slides exist (strip large inline photos if quota-bound)
+      if (this.slides.length > 1) {
+        this.syncActiveSlideRecord();
+        const deckPayload = {
+          w: this.canvasWidth,
+          h: this.canvasHeight,
+          pad: this.canvasPadding,
+          activeSlideIndex: this.activeSlideIndex,
+          slides: this.slides.map((s) => ({
+            ...s,
+            backdropImageUrl:
+              s.backdropImageUrl && s.backdropImageUrl.length < 180_000
+                ? s.backdropImageUrl
+                : undefined,
+            cards: s.cards.map((c) => ({
+              ...c,
+              imageDataUrl:
+                c.imageDataUrl && c.imageDataUrl.length < 180_000 ? c.imageDataUrl : undefined,
+            })),
+          })),
+        };
+        globalThis.localStorage.setItem(DECK_STORAGE_KEY, JSON.stringify(deckPayload));
+      } else {
+        globalThis.localStorage.removeItem(DECK_STORAGE_KEY);
+      }
     } catch {
       // Ignore storage quota or SSR/test environments
     }
@@ -608,6 +636,42 @@ export class WebStudioHost implements IBentoHost {
   private tryRestoreFromLocalStorage(): boolean {
     try {
       if (typeof globalThis.localStorage === 'undefined') return false;
+
+      // 1. Try restoring multi-slide carousel deck first
+      const rawDeck = globalThis.localStorage.getItem(DECK_STORAGE_KEY);
+      if (rawDeck) {
+        const parsedDeck = JSON.parse(rawDeck) as {
+          w?: number;
+          h?: number;
+          pad?: number;
+          activeSlideIndex?: number;
+          slides?: StudioSlideRecord[];
+        };
+        if (
+          typeof parsedDeck.w === 'number' &&
+          typeof parsedDeck.h === 'number' &&
+          Array.isArray(parsedDeck.slides) &&
+          parsedDeck.slides.length > 0
+        ) {
+          this.canvasWidth = Math.max(320, Math.min(3840, Math.round(parsedDeck.w)));
+          this.canvasHeight = Math.max(240, Math.min(3840, Math.round(parsedDeck.h)));
+          this.canvasPadding = Math.max(0, Math.round(parsedDeck.pad ?? 40));
+          this.presetId = this.detectPresetId(this.canvasWidth, this.canvasHeight);
+          this.slides = parsedDeck.slides;
+          this.slideSeq = parsedDeck.slides.length + 1;
+          this.activeSlideIndex = Math.max(
+            0,
+            Math.min(parsedDeck.slides.length - 1, parsedDeck.activeSlideIndex ?? 0)
+          );
+          const activeSlide = this.slides[this.activeSlideIndex]!;
+          this.loadSlideRecordIntoActiveCanvas(activeSlide);
+          this.seedTrail = [this.activeDoc?.params.seed ?? 48219];
+          this.seedIndex = 0;
+          return true;
+        }
+      }
+
+      // 2. Fallback to single-slide payload
       const raw = globalThis.localStorage.getItem(STORAGE_KEY);
       if (!raw) return false;
       const parsed = JSON.parse(raw) as Partial<ShareableStudioPayload>;
@@ -1499,6 +1563,7 @@ export class WebStudioHost implements IBentoHost {
       const newRecord = this.captureCurrentSlideRecord(`slide_${this.slideSeq++}`);
       this.slides.push(newRecord);
       this.activeSlideIndex = nextIdx;
+      this.persistToLocalStorage();
     }
 
     this.emitChange(true);

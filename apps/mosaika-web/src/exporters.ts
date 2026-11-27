@@ -20,7 +20,72 @@ import {
   parseQrBlock,
   parseQuoteBlock,
   resolveChartVariant,
+  resolveMockupDevice,
 } from './widgets.js';
+
+function buildInlineQrSvg(url: string, isJsx: boolean): string {
+  const matrix = buildQrMatrix(url);
+  const n = matrix.length;
+  const parts: string[] = [];
+  for (let r = 0; r < n; r++) {
+    for (let c = 0; c < n; c++) {
+      if (matrix[r]![c]) {
+        parts.push(`M${c} ${r}h1v1h-1z`);
+      }
+    }
+  }
+  const cls = isJsx ? 'className' : 'class';
+  return `<svg viewBox="0 0 ${n} ${n}" ${cls}="w-20 h-20 rounded-lg bg-white p-1.5 shrink-0"><path d="${parts.join('')}" fill="#111216" /></svg>`;
+}
+
+function buildInlineChartSvg(
+  values: readonly number[],
+  variant: 'sparkline' | 'bars' | 'ring',
+  accent: string,
+  isJsx: boolean
+): string {
+  const cls = isJsx ? 'className' : 'class';
+  const sw = isJsx ? 'strokeWidth={3}' : 'stroke-width="3"';
+  const slc = isJsx ? 'strokeLinecap="round"' : 'stroke-linecap="round"';
+
+  if (variant === 'bars') {
+    const maxVal = Math.max(1, ...values);
+    const peakIdx = values.indexOf(maxVal);
+    const gap = 8;
+    const bw = Math.max(8, (240 - gap * (values.length - 1)) / Math.max(1, values.length));
+    const rects = values
+      .map((val, i) => {
+        const bh = Math.max(8, (val / maxVal) * 64);
+        const bx = i * (bw + gap);
+        const by = 70 - bh;
+        const fill = i === peakIdx ? accent : 'currentColor';
+        const opAttr = isJsx
+          ? `fillOpacity={${i === peakIdx ? 0.95 : 0.22}}`
+          : `fill-opacity="${i === peakIdx ? '0.95' : '0.22'}"`;
+        return `<rect x="${bx.toFixed(1)}" y="${by.toFixed(1)}" width="${bw.toFixed(1)}" height="${bh.toFixed(1)}" rx="4" fill="${fill}" ${opAttr} />`;
+      })
+      .join('');
+    return `<svg viewBox="0 0 240 72" ${cls}="w-full mt-3">${rects}</svg>`;
+  }
+
+  if (variant === 'ring') {
+    const pct = Math.max(0, Math.min(100, values[values.length - 1] ?? 78));
+    const r = 26;
+    const circ = +(2 * Math.PI * r).toFixed(1);
+    const offset = +(circ * (1 - pct / 100)).toFixed(1);
+    const swRing = isJsx ? 'strokeWidth={7}' : 'stroke-width="7"';
+    const soRing = isJsx ? 'strokeOpacity={0.16}' : 'stroke-opacity="0.16"';
+    const sda = isJsx ? `strokeDasharray="${circ}"` : `stroke-dasharray="${circ}"`;
+    const sdo = isJsx ? `strokeDashoffset="${offset}"` : `stroke-dashoffset="${offset}"`;
+    const ta = isJsx ? 'textAnchor="middle"' : 'text-anchor="middle"';
+    const fs = isJsx ? 'fontSize={14}' : 'font-size="14"';
+    const fw = isJsx ? 'fontWeight={700}' : 'font-weight="700"';
+    return `<svg viewBox="0 0 240 72" ${cls}="w-full mt-3"><circle cx="120" cy="36" r="${r}" fill="none" stroke="currentColor" ${soRing} ${swRing} /><circle cx="120" cy="36" r="${r}" fill="none" stroke="${accent}" ${swRing} ${slc} ${sda} ${sdo} transform="rotate(-90 120 36)" /><text x="120" y="41" ${ta} fill="currentColor" ${fs} ${fw}>${Math.round(pct)}%</text></svg>`;
+  }
+
+  const { linePath } = computeSparklineGeometry(values, 240, 72);
+  return `<svg viewBox="0 0 240 72" ${cls}="w-full mt-3"><path d="${linePath}" fill="none" stroke="${accent}" ${sw} ${slc} /></svg>`;
+}
 
 function escapeXml(value: string): string {
   return value
@@ -453,20 +518,50 @@ export function exportToSvg(snapshot: StudioSnapshot): string {
         );
       } else if (card.blockType === 'mockup') {
         const mLines = content.split(/\r?\n/);
-        const devW = Math.min(card.rect.width * 0.72, 260);
-        const devH = Math.max(80, card.rect.height * 0.56);
-        const devX = card.rect.left + (card.rect.width - devW) / 2;
-        const devY = card.rect.top + card.rect.height - devH + 16;
-        cardParts.push(
-          `<g clip-path="url(#${clipId})">` +
-            `<text x="${textX.toFixed(1)}" y="${(card.rect.top + padTop + fontSize).toFixed(1)}" fill="${escapeXml(card.style.textColorHex)}" font-size="${fontSize}" font-weight="600" font-family="${escapeXml(fontSpec.headingFamily)}">${escapeXml(mLines[0] ?? 'Product Preview')}</text>` +
-            `<rect x="${devX.toFixed(1)}" y="${devY.toFixed(1)}" width="${devW.toFixed(1)}" height="${devH.toFixed(1)}" rx="22" fill="#18181B" stroke="rgba(255,255,255,0.22)" stroke-width="1.5"/>` +
+        const device = resolveMockupDevice(card.widgetVariant);
+        const titleEl = `<text x="${textX.toFixed(1)}" y="${(card.rect.top + padTop + fontSize).toFixed(1)}" fill="${escapeXml(card.style.textColorHex)}" font-size="${fontSize}" font-weight="600" font-family="${escapeXml(fontSpec.headingFamily)}">${escapeXml(mLines[0] ?? 'Product Preview')}</text>`;
+        let frameSvg = '';
+        if (device === 'browser') {
+          const devW = Math.min(card.rect.width * 0.88, 360);
+          const devH = Math.max(84, card.rect.height * 0.56);
+          const devX = card.rect.left + (card.rect.width - devW) / 2;
+          const devY = card.rect.top + card.rect.height - devH + 10;
+          frameSvg =
+            `<rect x="${devX.toFixed(1)}" y="${devY.toFixed(1)}" width="${devW.toFixed(1)}" height="${devH.toFixed(1)}" rx="10" fill="#18181B" stroke="rgba(255,255,255,0.2)" stroke-width="1.5"/>` +
+            `<circle cx="${(devX + 14).toFixed(1)}" cy="${(devY + 12).toFixed(1)}" r="3.5" fill="#FB7185"/>` +
+            `<circle cx="${(devX + 25).toFixed(1)}" cy="${(devY + 12).toFixed(1)}" r="3.5" fill="#FBBF24"/>` +
+            `<circle cx="${(devX + 36).toFixed(1)}" cy="${(devY + 12).toFixed(1)}" r="3.5" fill="#34D399"/>` +
+            `<rect x="${(devX + 52).toFixed(1)}" y="${(devY + 7).toFixed(1)}" width="${(devW - 66).toFixed(1)}" height="10" rx="5" fill="rgba(255,255,255,0.12)"/>` +
+            `<rect x="${(devX + 2).toFixed(1)}" y="${(devY + 24).toFixed(1)}" width="${(devW - 4).toFixed(1)}" height="${(devH - 26).toFixed(1)}" rx="6" fill="#FFFFFF"/>` +
+            (card.imageDataUrl
+              ? `<image href="${escapeXml(card.imageDataUrl)}" x="${(devX + 2).toFixed(1)}" y="${(devY + 24).toFixed(1)}" width="${(devW - 4).toFixed(1)}" height="${(devH - 26).toFixed(1)}" preserveAspectRatio="xMidYMin slice"/>`
+              : '');
+        } else if (device === 'macbook') {
+          const devW = Math.min(card.rect.width * 0.84, 340);
+          const devH = Math.max(82, card.rect.height * 0.52);
+          const devX = card.rect.left + (card.rect.width - devW) / 2;
+          const devY = card.rect.top + card.rect.height - devH - 8;
+          frameSvg =
+            `<rect x="${devX.toFixed(1)}" y="${devY.toFixed(1)}" width="${devW.toFixed(1)}" height="${devH.toFixed(1)}" rx="10" fill="#18181B" stroke="rgba(255,255,255,0.22)" stroke-width="1.5"/>` +
+            `<rect x="${(devX + 7).toFixed(1)}" y="${(devY + 8).toFixed(1)}" width="${(devW - 14).toFixed(1)}" height="${(devH - 16).toFixed(1)}" rx="4" fill="#FFFFFF"/>` +
+            (card.imageDataUrl
+              ? `<image href="${escapeXml(card.imageDataUrl)}" x="${(devX + 7).toFixed(1)}" y="${(devY + 8).toFixed(1)}" width="${(devW - 14).toFixed(1)}" height="${(devH - 16).toFixed(1)}" preserveAspectRatio="xMidYMin slice"/>`
+              : '') +
+            `<rect x="${(devX - 14).toFixed(1)}" y="${(devY + devH).toFixed(1)}" width="${(devW + 28).toFixed(1)}" height="8" rx="4" fill="#A1A1AA"/>`;
+        } else {
+          const devW = Math.min(card.rect.width * 0.72, 240);
+          const devH = Math.max(80, card.rect.height * 0.56);
+          const devX = card.rect.left + (card.rect.width - devW) / 2;
+          const devY = card.rect.top + card.rect.height - devH + 16;
+          frameSvg =
+            `<rect x="${devX.toFixed(1)}" y="${devY.toFixed(1)}" width="${devW.toFixed(1)}" height="${devH.toFixed(1)}" rx="24" fill="#18181B" stroke="rgba(255,255,255,0.22)" stroke-width="1.5"/>` +
+            `<rect x="${(devX + devW / 2 - 22).toFixed(1)}" y="${(devY + 7).toFixed(1)}" width="44" height="7" rx="3.5" fill="#09090B"/>` +
             `<rect x="${(devX + 7).toFixed(1)}" y="${(devY + 18).toFixed(1)}" width="${(devW - 14).toFixed(1)}" height="${(devH - 18).toFixed(1)}" rx="15" fill="#FFFFFF"/>` +
             (card.imageDataUrl
               ? `<image href="${escapeXml(card.imageDataUrl)}" x="${(devX + 7).toFixed(1)}" y="${(devY + 18).toFixed(1)}" width="${(devW - 14).toFixed(1)}" height="${(devH - 18).toFixed(1)}" preserveAspectRatio="xMidYMin slice"/>`
-              : '') +
-            `</g>`
-        );
+              : '');
+        }
+        cardParts.push(`<g clip-path="url(#${clipId})">${titleEl}${frameSvg}</g>`);
       } else {
         const startY = isCircle
           ? card.rect.top + card.rect.height / 2 - ((lines.length - 1) * fontSize * 1.3) / 2
@@ -656,14 +751,14 @@ export function exportToHtmlTailwind(snapshot: StudioSnapshot): string {
       ].filter((v): v is string => Boolean(v));
     } else if (card.blockType === 'chart') {
       const chart = parseChartBlock(card.text.trim());
-      const { linePath } = computeSparklineGeometry(chart.values, 240, 72);
+      const variant = resolveChartVariant(card.widgetVariant);
       innerHtml = [
         kickerLine,
         `    <div class="flex items-baseline justify-between gap-2">`,
         `      <h3 class="text-sm font-semibold">${escapeXml(chart.title)}</h3>`,
         chart.delta ? `      <span class="text-xs font-semibold opacity-75">${escapeXml(chart.delta)}</span>` : null,
         `    </div>`,
-        `    <svg viewBox="0 0 240 72" class="w-full mt-3"><path d="${linePath}" fill="none" stroke="${snapshot.brandAccentHex}" stroke-width="3" stroke-linecap="round"/></svg>`,
+        `    ${buildInlineChartSvg(chart.values, variant, snapshot.brandAccentHex, false)}`,
       ].filter((v): v is string => Boolean(v));
     } else if (card.blockType === 'code') {
       const code = parseCodeBlock(card.text.trim());
@@ -691,8 +786,37 @@ export function exportToHtmlTailwind(snapshot: StudioSnapshot): string {
       const qr = parseQrBlock(card.text.trim());
       innerHtml = [
         kickerLine,
-        `    <h3 class="text-sm font-semibold">${escapeXml(qr.caption)}</h3>`,
-        `    <p class="mt-1 text-xs font-mono opacity-70">${escapeXml(qr.url)}</p>`,
+        `    <div class="flex items-center gap-3">`,
+        `      ${buildInlineQrSvg(qr.url, false)}`,
+        `      <div>`,
+        `        <h3 class="text-sm font-semibold">${escapeXml(qr.caption)}</h3>`,
+        `        <p class="mt-1 text-xs font-mono opacity-70 break-all">${escapeXml(qr.url)}</p>`,
+        `      </div>`,
+        `    </div>`,
+      ].filter((v): v is string => Boolean(v));
+    } else if (card.blockType === 'mockup') {
+      const device = resolveMockupDevice(card.widgetVariant);
+      const mLines = (card.text.trim() || 'Product Preview').split(/\r?\n/);
+      const title = escapeXml(mLines[0] ?? 'Product Preview');
+      const subtitle = mLines.slice(1).map(escapeXml).join(' ');
+      const bezelClass =
+        device === 'iphone'
+          ? 'mx-auto w-3/4 rounded-t-[26px] border-4 border-zinc-900 bg-zinc-900 pt-3 px-1.5 pb-0'
+          : device === 'macbook'
+            ? 'mx-auto w-11/12 rounded-t-xl border-4 border-zinc-900 bg-zinc-900 p-1.5'
+            : 'mx-auto w-full rounded-t-xl border border-zinc-800 bg-zinc-900 pt-2 px-1.5 pb-0';
+      innerHtml = [
+        kickerLine,
+        `    <h3 class="text-sm font-semibold leading-tight">${title}</h3>`,
+        subtitle ? `    <p class="mt-1 text-xs opacity-75">${subtitle}</p>` : null,
+        `    <div class="mt-3 ${bezelClass}" data-device="${device}">`,
+        device === 'browser'
+          ? `      <div class="flex items-center gap-1 px-2 pb-1.5"><span class="w-2 h-2 rounded-full bg-rose-400"></span><span class="w-2 h-2 rounded-full bg-amber-400"></span><span class="w-2 h-2 rounded-full bg-emerald-400"></span></div>`
+          : device === 'iphone'
+            ? `      <div class="w-12 h-1.5 rounded-full bg-zinc-700 mx-auto mb-2"></div>`
+            : null,
+        `      <div class="h-28 rounded-t-lg bg-white/95 dark:bg-zinc-950 flex items-center justify-center text-[11px] font-mono text-zinc-400">${device.toUpperCase()} PREVIEW</div>`,
+        `    </div>`,
       ].filter((v): v is string => Boolean(v));
     } else {
       const lines = (card.text.trim() || card.contentHint || card.shapeName).split(/\r?\n/);
@@ -827,15 +951,13 @@ export function exportToReactFramerMotion(snapshot: StudioSnapshot): string {
       ].join('\n');
     } else if (card.blockType === 'chart') {
       const ch = parseChartBlock(card.text.trim());
-      const { linePath } = computeSparklineGeometry(ch.values, 240, 72);
+      const variant = resolveChartVariant(card.widgetVariant);
       bodyJsx = [
         `          <div className="flex items-baseline justify-between gap-2">`,
         `            <h3 className="text-sm font-semibold">${escapeXml(ch.title)}</h3>`,
         ch.delta ? `            <span className="text-xs font-semibold opacity-75">${escapeXml(ch.delta)}</span>` : '',
         `          </div>`,
-        `          <svg viewBox="0 0 240 72" className="w-full mt-3">`,
-        `            <path d="${linePath}" fill="none" stroke="${snapshot.brandAccentHex}" strokeWidth={3} strokeLinecap="round" />`,
-        `          </svg>`,
+        `          ${buildInlineChartSvg(ch.values, variant, snapshot.brandAccentHex, true)}`,
       ]
         .filter(Boolean)
         .join('\n');
@@ -844,6 +966,44 @@ export function exportToReactFramerMotion(snapshot: StudioSnapshot): string {
       bodyJsx = [
         `          <blockquote className="text-lg italic leading-snug">“${escapeXml(q.quote)}”</blockquote>`,
         q.author ? `          <p className="mt-2 text-xs font-semibold opacity-70">— ${escapeXml(q.author)}</p>` : '',
+      ]
+        .filter(Boolean)
+        .join('\n');
+    } else if (card.blockType === 'proof') {
+      const proof = parseProofBlock(card.text.trim());
+      bodyJsx = [
+        `          <div className="text-amber-500 text-xs font-semibold">★★★★★ <span className="opacity-80 text-current">${escapeXml(proof.rating)}</span></div>`,
+        `          <h3 className="mt-2 text-base font-semibold">${escapeXml(proof.headline)}</h3>`,
+        `          <p className="mt-1 text-xs opacity-75">${escapeXml(proof.caption)}</p>`,
+      ].join('\n');
+    } else if (card.blockType === 'qr') {
+      const qr = parseQrBlock(card.text.trim());
+      bodyJsx = [
+        `          <div className="flex items-center gap-3">`,
+        `            ${buildInlineQrSvg(qr.url, true)}`,
+        `            <div>`,
+        `              <h3 className="text-sm font-semibold">${escapeXml(qr.caption)}</h3>`,
+        `              <p className="mt-1 text-xs font-mono opacity-70 break-all">${escapeXml(qr.url)}</p>`,
+        `            </div>`,
+        `          </div>`,
+      ].join('\n');
+    } else if (card.blockType === 'mockup') {
+      const device = resolveMockupDevice(card.widgetVariant);
+      const mLines = (card.text.trim() || 'Product Preview').split(/\r?\n/);
+      const title = escapeXml(mLines[0] ?? 'Product Preview');
+      const subtitle = mLines.slice(1).map(escapeXml).join(' ');
+      const bezelClass =
+        device === 'iphone'
+          ? 'mx-auto w-3/4 rounded-t-[26px] border-4 border-zinc-900 bg-zinc-900 pt-3 px-1.5'
+          : device === 'macbook'
+            ? 'mx-auto w-11/12 rounded-t-xl border-4 border-zinc-900 bg-zinc-900 p-1.5'
+            : 'mx-auto w-full rounded-t-xl border border-zinc-800 bg-zinc-900 pt-2 px-1.5';
+      bodyJsx = [
+        `          <h3 className="text-sm font-semibold leading-tight">${title}</h3>`,
+        subtitle ? `          <p className="mt-1 text-xs opacity-75">${subtitle}</p>` : '',
+        `          <div className="mt-3 ${bezelClass}" data-device="${device}">`,
+        `            <div className="h-28 rounded-t-lg bg-white/95 flex items-center justify-center text-[11px] font-mono text-zinc-400">${device.toUpperCase()} PREVIEW</div>`,
+        `          </div>`,
       ]
         .filter(Boolean)
         .join('\n');

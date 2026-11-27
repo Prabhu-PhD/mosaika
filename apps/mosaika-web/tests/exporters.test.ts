@@ -470,4 +470,62 @@ describe('Mosaika Web Studio — exporters & live reflow', () => {
     const tailFrame = computeCardMotionState(0, 3.15, 3.2);
     expect(tailFrame.opacity).toBeLessThan(holdFrame.opacity);
   });
+
+  it('maintains full SVG/HTML/React widget parity (Bars, Ring, inline QR, Proof, Browser/MacBook mockups) and persists multi-slide decks', () => {
+    const host = new WebStudioHost({ skipDefaultSeed: false });
+    const cards = host.getSnapshot().cards;
+
+    // Bars chart, Ring chart, QR, Proof, Browser mockup
+    host.setCardBlockType(cards[0]!.id, 'chart');
+    host.setCardWidgetVariant(cards[0]!.id, 'ring');
+    host.setCardBlockType(cards[1]!.id, 'chart');
+    host.setCardWidgetVariant(cards[1]!.id, 'bars');
+    host.setCardBlockType(cards[2]!.id, 'qr');
+    host.setCardBlockType(cards[3]!.id, 'proof');
+    host.setCardBlockType(cards[4]!.id, 'mockup');
+    host.setCardWidgetVariant(cards[4]!.id, 'browser');
+
+    const snap = host.getSnapshot();
+    const svg = exportToSvg(snap);
+    expect(svg).toContain('#FB7185'); // Browser traffic-light dot in SVG mockup
+
+    const html = exportToHtmlTailwind(snap);
+    expect(html).toContain('stroke-dasharray='); // Ring chart in HTML
+    expect(html).toContain('data-device="browser"'); // Browser mockup in HTML
+    expect(html).toContain('rounded-lg bg-white p-1.5'); // Inline vector QR in HTML
+
+    const tsx = exportToReactFramerMotion(snap);
+    expect(tsx).toContain('strokeDasharray='); // Ring chart in React TSX
+    expect(tsx).toContain('fillOpacity={'); // Bars chart in React TSX
+    expect(tsx).toContain('★★★★★'); // Social Proof in React TSX
+    expect(tsx).toContain('data-device="browser"'); // Mockup in React TSX
+    expect(tsx).toContain('M0 0h1v1h-1z'); // Inline scannable QR path in React TSX
+
+    // Multi-slide localStorage persistence across fresh host boot
+    const store = new Map<string, string>();
+    const prevLS = globalThis.localStorage;
+    Object.defineProperty(globalThis, 'localStorage', {
+      configurable: true,
+      value: {
+        getItem: (k: string) => store.get(k) ?? null,
+        setItem: (k: string, v: string) => store.set(k, v),
+        removeItem: (k: string) => store.delete(k),
+      },
+    });
+    try {
+      const deckHost = new WebStudioHost({ skipDefaultSeed: false });
+      deckHost.addSlide(false);
+      expect(deckHost.getSnapshot().slides).toHaveLength(2);
+      expect(deckHost.getSnapshot().activeSlideIndex).toBe(1);
+
+      const restoredHost = new WebStudioHost({ skipDefaultSeed: false });
+      expect(restoredHost.getSnapshot().slides).toHaveLength(2);
+      expect(restoredHost.getSnapshot().activeSlideIndex).toBe(1);
+    } finally {
+      Object.defineProperty(globalThis, 'localStorage', {
+        configurable: true,
+        value: prevLS,
+      });
+    }
+  });
 });
